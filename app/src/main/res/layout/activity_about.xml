@@ -42,10 +42,10 @@
                     android:layout_height="wrap_content"
                     android:gravity="center_horizontal"
                     android:orientation="vertical"
-                    android:paddingTop="28dp"
-                    android:paddingBottom="24dp"
                     android:paddingStart="20dp"
-                    android:paddingEnd="20dp">
+                    android:paddingTop="28dp"
+                    android:paddingEnd="20dp"
+                    android:paddingBottom="24dp">
 
                     <ImageView
                         android:layout_width="76dp"
@@ -76,7 +76,6 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="14dp"
                         android:gravity="center"
-                        android:lineSpacingExtra="4dp"
                         android:text="本地运行的 SO 逆向分析工作台"
                         android:textColor="@color/text_secondary"
                         android:textSize="14sp" />
@@ -113,7 +112,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:lineSpacingExtra="5dp"
-                        android:text="SO Sandbox 面向 Android 原生库的分析与调试：解析 ELF 结构、浏览函数与字符串、反汇编并生成伪 C 代码，也可以在设备上直接加载 SO、调用导出函数、下断点观察寄存器和内存。\n\n全部计算在手机本地完成，不依赖云端服务，分析数据与文件修改都留在设备上。"
+                        android:text="SO Sandbox 面向 Android 原生库的分析与调试：解析 ELF 结构、浏览函数与字符串、反汇编并生成伪 C 代码，也可以在设备上直接加载 SO、调用导出函数、下断点观察寄存器和内存。\n\n解析与修改全部在手机本地完成，不依赖云端服务，分析数据与文件都留在设备上。"
                         android:textColor="@color/text_secondary"
                         android:textSize="14sp" />
 
@@ -121,7 +120,7 @@
 
             </androidx.cardview.widget.CardView>
 
-            <!-- 功能 -->
+            <!-- 主要能力 -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -145,55 +144,100 @@
                         android:textStyle="bold" />
 
                     <TextView
-                        android:layout_width="match_parent"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
-                        android:lineSpacingExtra="3dp"
-                        android:text="ELF 结构解析\n段表、节表、符号表、动态链接信息与 PLT/GOT 一屏查看。"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="14sp" />
+                        android:layout_marginTop="16dp"
+                        android:text="ELF 结构解析"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
+                        android:layout_marginTop="4dp"
                         android:lineSpacingExtra="3dp"
-                        android:text="反汇编与伪 C\n基于 Capstone 的 ARM64 反汇编，支持跳转跟随、指令修改与回写。"
+                        android:text="段表、节表、符号表、动态链接信息与 PLT/GOT 一屏查看。"
                         android:textColor="@color/text_secondary"
-                        android:textSize="14sp" />
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:text="反汇编与伪 C"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
+                        android:layout_marginTop="4dp"
                         android:lineSpacingExtra="3dp"
-                        android:text="字符串与交叉引用\n过滤噪声后定位关键字符串，追踪哪些函数引用它、又调用了谁。"
+                        android:text="基于 Capstone 的 ARM64 反汇编，支持长按复制、指令修改与回写。"
                         android:textColor="@color/text_secondary"
-                        android:textSize="14sp" />
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:text="字符串与交叉引用"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
+                        android:layout_marginTop="4dp"
                         android:lineSpacingExtra="3dp"
-                        android:text="动态调试与调用\n加载 SO 后直接调用导出函数，支持断点、单步、寄存器与内存查看。"
+                        android:text="过滤噪声后定位关键字符串，追踪哪些函数引用了它、它又调用了谁。"
                         android:textColor="@color/text_secondary"
-                        android:textSize="14sp" />
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:text="动态调试与调用"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
+                        android:layout_marginTop="4dp"
                         android:lineSpacingExtra="3dp"
-                        android:text="MCP 服务\n在局域网内把上述能力开放给 AI 客户端，由模型驱动分析流程。"
+                        android:text="加载 SO 后直接调用导出函数，支持断点、单步、寄存器与内存查看。"
                         android:textColor="@color/text_secondary"
-                        android:textSize="14sp" />
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:text="MCP 服务"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:lineSpacingExtra="3dp"
+                        android:text="在局域网内把上述能力开放给 AI 客户端，由模型驱动分析流程。"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp" />
 
                 </LinearLayout>
 
             </androidx.cardview.widget.CardView>
 
-            <!-- 说明 -->
+            <!-- 使用说明 -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -223,7 +267,7 @@
                         android:lineSpacingExtra="5dp"
                         android:text="• 核心分析功能离线可用，首次打开无需联网\n• AI 伪 C 与 MCP 服务按需联网，接口与客户端由你自行提供\n• 修改只写入应用私有工作副本，不会改动原始文件\n• 请仅用于自己拥有授权的应用与安全研究，遵守当地法律法规"
                         android:textColor="@color/text_secondary"
-                        android:textSize="14sp" />
+                        android:textSize="13sp" />
 
                 </LinearLayout>
 
