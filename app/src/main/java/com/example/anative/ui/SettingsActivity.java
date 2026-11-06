@@ -4,7 +4,6 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.TypedValue;
@@ -52,17 +51,10 @@ public class SettingsActivity extends AppCompatActivity {
     public static final String PREF_AI_PSEUDOC_ENABLED = "ai_pseudoc_enabled";
     public static final String PREF_PSEUDOC_PROMPT = "pseudoc_prompt";
     public static final String PREF_CODE_FONT_SIZE = "code_font_size";
-    public static final String PREF_CARD_KEY = "card_key";
-    public static final String PREF_DEVICE_AUTHORIZED = "device_authorized";
-    public static final String PREF_SESSION_KEY = "session_key";
-    public static final String PREF_EXPIRE_AT = "expire_at";
-    public static final String PREF_SERVER_URL = "server_url";
     public static final String PREF_FUNCTION_DISCOVERY_MODE = "function_discovery_mode";
 
     private static final String TAG = "SettingsActivity";
     private static final float DEFAULT_CODE_FONT_SIZE_SP = 13f;
-    private static final String QQ_GROUP_NUMBER = "937712419";
-    private static final String UPDATE_URL = "https://api.github.com/repos/2452151196/So-Sandbox/releases/latest";
     private static final String DEFAULT_OPENAI_TEMPLATE = "{\n"
             + "  \"model\": \"gpt-3.5-turbo\",\n"
             + "  \"messages\": [\n"
@@ -74,20 +66,15 @@ public class SettingsActivity extends AppCompatActivity {
     private SwitchCompat switchAiPseudoC;
     private TextView tvAiStatus;
     private TextView tvCodeFontSize;
-    private TextView tvUpdateStatus;
     private TextView tvAboutSummary;
     private TextView tvFunctionDiscoveryMode;
     private CardView cardAiSettings;
     private CardView cardPseudoCPrompt;
     private CardView cardCodeFontSize;
     private CardView cardFunctionDiscoveryMode;
-    private CardView cardQqGroup;
-    private CardView cardCheckUpdate;
     private CardView cardAbout;
     private CardView cardMcp;
     private TextView tvMcpStatus;
-    private CardView cardSponsor;
-    private TextView tvSponsorStatus;
     private TextView tvPseudoCPromptPreview;
     private SharedPreferences prefs;
 
@@ -132,37 +119,28 @@ public class SettingsActivity extends AppCompatActivity {
         tvAiStatus = findViewById(R.id.tv_ai_status);
         cardAiSettings = findViewById(R.id.card_ai_settings);
         tvCodeFontSize = findViewById(R.id.tv_code_font_size);
-        tvUpdateStatus = findViewById(R.id.tv_update_status);
         tvAboutSummary = findViewById(R.id.tv_about_summary);
         tvFunctionDiscoveryMode = findViewById(R.id.tv_function_discovery_mode);
         cardCodeFontSize = findViewById(R.id.card_code_font_size);
         cardFunctionDiscoveryMode = findViewById(R.id.card_function_discovery_mode);
-        cardQqGroup = findViewById(R.id.card_qq_group);
-        cardCheckUpdate = findViewById(R.id.card_check_update);
         cardAbout = findViewById(R.id.card_about);
         cardMcp = findViewById(R.id.card_mcp);
         tvMcpStatus = findViewById(R.id.tv_mcp_status);
 
-        cardSponsor = findViewById(R.id.card_sponsor);
-        tvSponsorStatus = findViewById(R.id.tv_sponsor_status);
 
         updateAiStatus();
         updateCodeFontSizeSummary();
-        updateUpdateStatus();
         updateAboutSummary();
-        updateSponsorStatus();
         updateFunctionDiscoveryModeSummary();
         updateMcpStatus();
 
         cardAiSettings.setOnClickListener(v -> showAiSettingsDialog());
         cardCodeFontSize.setOnClickListener(v -> showCodeFontSizeDialog());
         cardFunctionDiscoveryMode.setOnClickListener(v -> showFunctionDiscoveryModeDialog());
-        cardQqGroup.setOnClickListener(v -> showQqGroupDialog());
-        cardCheckUpdate.setOnClickListener(v -> showCheckUpdateDialog());
-        cardAbout.setOnClickListener(v -> showAboutDialog());
+        cardAbout.setOnClickListener(v -> startActivity(
+                new Intent(SettingsActivity.this, AboutActivity.class)));
         cardMcp.setOnClickListener(v -> startActivity(
                 new Intent(SettingsActivity.this, McpActivity.class)));
-        cardSponsor.setOnClickListener(v -> showSponsorDialog());
     }
 
     private void updateMcpStatus() {
@@ -230,34 +208,8 @@ public class SettingsActivity extends AppCompatActivity {
         return "平衡";
     }
 
-    private void updateUpdateStatus() {
-        tvUpdateStatus.setText("当前版本 v" + getAppVersionName());
-    }
-
     private void updateAboutSummary() {
-        tvAboutSummary.setText("当前版本 v" + getAppVersionName());
-    }
-
-    private void updateSponsorStatus() {
-        boolean authorized = prefs.getBoolean(PREF_DEVICE_AUTHORIZED, false);
-        long expireAt = prefs.getLong(PREF_EXPIRE_AT, 0);
-        if (authorized && expireAt > 0) {
-            long now = System.currentTimeMillis();
-            int daysLeft = (int) ((expireAt - now) / (24 * 60 * 60 * 1000));
-            if (daysLeft < 0) {
-                tvSponsorStatus.setText("已过期，请重新激活");
-                tvSponsorStatus.setTextColor(getResources().getColor(R.color.orange_warning));
-            } else {
-                tvSponsorStatus.setText("已激活 ✓ (剩余 " + daysLeft + " 天)");
-                tvSponsorStatus.setTextColor(getResources().getColor(R.color.green_success));
-            }
-        } else if (authorized) {
-            tvSponsorStatus.setText("已激活 ✓");
-            tvSponsorStatus.setTextColor(getResources().getColor(R.color.green_success));
-        } else {
-            tvSponsorStatus.setText("输入卡密激活功能");
-            tvSponsorStatus.setTextColor(getResources().getColor(R.color.text_secondary));
-        }
+        tvAboutSummary.setText("v" + getAppVersionName() + " · 功能与使用说明");
     }
 
     private String getAppVersionName() {
@@ -334,221 +286,6 @@ public class SettingsActivity extends AppCompatActivity {
                 })
                 .setNegativeButton("取消", null)
                 .show();
-    }
-
-    private void showQqGroupDialog() {
-        String message = "QQ群号：" + QQ_GROUP_NUMBER + "\n\n可复制群号后在 QQ 中搜索加入。";
-        new AlertDialog.Builder(this)
-                .setTitle("加入QQ群")
-                .setMessage(message)
-                .setPositiveButton("复制群号", (dialog, which) -> {
-                    android.content.ClipboardManager clipboardManager =
-                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                    if (clipboardManager != null) {
-                        clipboardManager.setPrimaryClip(android.content.ClipData.newPlainText("qq_group", QQ_GROUP_NUMBER));
-                        Toast.makeText(this, "群号已复制", Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .setNegativeButton("关闭", null)
-                .show();
-    }
-
-    private void showCheckUpdateDialog() {
-        String message = "当前版本：v" + getAppVersionName();
-        AlertDialog.Builder builder = new AlertDialog.Builder(this)
-                .setTitle("检测更新")
-                .setMessage("正在检测更新...")
-                .setNegativeButton("关闭", null);
-
-        if (UPDATE_URL == null || UPDATE_URL.trim().isEmpty()) {
-            builder.setMessage("暂未配置更新地址");
-            builder.setPositiveButton("知道了", (dialog, which) ->
-                    Toast.makeText(this, "暂未配置更新地址", Toast.LENGTH_SHORT).show());
-            builder.show();
-            return;
-        }
-
-        AlertDialog dialog = builder.show();
-
-        new Thread(() -> {
-            try {
-                java.net.URL url = new java.net.URL(UPDATE_URL);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-                
-                java.io.BufferedReader reader = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                reader.close();
-                
-                org.json.JSONObject json = new org.json.JSONObject(response.toString());
-                String latestVersion = json.getString("tag_name").replace("v", "");
-                String releaseUrl = json.getString("html_url");
-                String releaseNotes = json.optString("body", "无更新说明");
-                
-                String currentVersion = getAppVersionName();
-                boolean hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
-                
-                runOnUiThread(() -> {
-                    dialog.dismiss();
-                    if (hasUpdate) {
-                        new AlertDialog.Builder(this)
-                                .setTitle("发现新版本")
-                                .setMessage("当前版本：v" + currentVersion + "\n最新版本：v" + latestVersion + "\n\n" + releaseNotes)
-                                .setPositiveButton("前往更新", (d, w) -> openUrl(releaseUrl))
-                                .setNegativeButton("取消", null)
-                                .show();
-                    } else {
-                        new AlertDialog.Builder(this)
-                                .setTitle("已是最新版本")
-                                .setMessage("当前版本：v" + currentVersion + "\n\n无需更新")
-                                .setPositiveButton("确定", null)
-                                .show();
-                    }
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    dialog.dismiss();
-                    new AlertDialog.Builder(this)
-                            .setTitle("检测失败")
-                            .setMessage("无法连接更新服务器\n" + e.getMessage())
-                            .setPositiveButton("确定", null)
-                            .show();
-                });
-            }
-        }).start();
-    }
-
-    private int compareVersions(String v1, String v2) {
-        String[] parts1 = v1.split("\\.");
-        String[] parts2 = v2.split("\\.");
-        int length = Math.max(parts1.length, parts2.length);
-        for (int i = 0; i < length; i++) {
-            int n1 = i < parts1.length ? Integer.parseInt(parts1[i]) : 0;
-            int n2 = i < parts2.length ? Integer.parseInt(parts2[i]) : 0;
-            if (n1 != n2) {
-                return n1 - n2;
-            }
-        }
-        return 0;
-    }
-    private void showAboutDialog() {
-
-        String message = "应用名称：" + getString(R.string.app_name)
-                + "\n版本：v" + getAppVersionName()
-                + "\n\n这是一个 SO 文件逆向分析工具。\n\n项目已完全离线开源，无需网络即可使用全部功能。\n后续更新随缘。\n\n开源地址：\nhttps://github.com/2452151196/So-Sandbox";
-        new AlertDialog.Builder(this)
-                .setTitle("关于软件")
-                .setMessage(message)
-                .setPositiveButton("确定", null)
-                .show();
-    }
-    private void openUrl(String url) {
-        try {
-            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-            startActivity(intent);
-        } catch (Exception e) {
-            Toast.makeText(this, "无法打开链接", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void showSponsorDialog() {
-        boolean authorized = prefs.getBoolean(PREF_DEVICE_AUTHORIZED, false);
-        if (authorized) {
-            new AlertDialog.Builder(this)
-                    .setTitle("赞助激活")
-                    .setMessage("设备已激活，感谢支持！")
-                    .setPositiveButton("确定", null)
-                    .show();
-            return;
-        }
-
-        View dialogView = getLayoutInflater().inflate(R.layout.dialog_simple_input, null);
-        TextInputEditText etCardKey = dialogView.findViewById(R.id.et_input);
-
-        new AlertDialog.Builder(this)
-                .setTitle("赞助激活")
-                .setMessage("请输入赞助卡密（如：ABCD-EFGH-IJKL-MNOP）\n\n赞助功能：\n• 动态注册分析\n• 交叉引用分析")
-                .setView(dialogView)
-                .setPositiveButton("验证", (dialog, which) -> {
-                    String cardKey = etCardKey.getText() != null ? etCardKey.getText().toString().trim().toUpperCase() : "";
-                    if (cardKey.isEmpty()) {
-                        Toast.makeText(this, "请输入卡密", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    verifyCardKey(cardKey);
-                })
-                .setNegativeButton("取消", null)
-                .show();
-    }
-
-    private void verifyCardKey(String cardKey) {
-        String deviceId = android.provider.Settings.Secure.getString(
-                getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
-        String serverUrl = "http://chahaoma.xyz:8902";
-
-        new Thread(() -> {
-            try {
-                java.net.URL url = new java.net.URL(serverUrl + "/api/verifyCard");
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-                conn.setDoOutput(true);
-
-                String params = "cardKey=" + java.net.URLEncoder.encode(cardKey, "UTF-8") +
-                        "&deviceId=" + java.net.URLEncoder.encode(deviceId, "UTF-8");
-
-                java.io.OutputStream os = conn.getOutputStream();
-                os.write(params.getBytes("UTF-8"));
-                os.flush();
-                os.close();
-
-                java.io.InputStream is = conn.getInputStream();
-                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                reader.close();
-
-                org.json.JSONObject json = new org.json.JSONObject(response.toString());
-
-                runOnUiThread(() -> {
-                    try {
-                        if (json.getBoolean("ok")) {
-                            int days = json.optInt("days", 30);
-                            long expireAt = json.optLong("expireAt", 0);
-                            String sessionKey = json.optString("sessionKey", "");
-                            prefs.edit()
-                                    .putString(PREF_CARD_KEY, cardKey)
-                                    .putBoolean(PREF_DEVICE_AUTHORIZED, true)
-                                    .putString(PREF_SESSION_KEY, sessionKey)
-                                    .putLong(PREF_EXPIRE_AT, expireAt)
-                                    .apply();
-                            updateSponsorStatus();
-                            Toast.makeText(this, "激活成功！有效期 " + days + " 天", Toast.LENGTH_LONG).show();
-                        } else {
-                            String msg = json.optString("msg", "验证失败");
-                            Toast.makeText(this, "激活失败：" + msg, Toast.LENGTH_LONG).show();
-                        }
-                    } catch (Exception e) {
-                        Toast.makeText(this, "激活失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
-                    }
-                });
-            } catch (Exception e) {
-                e.printStackTrace();
-                runOnUiThread(() -> {
-                    Toast.makeText(this, "验证失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
-                });
-            }
-        }).start();
     }
 
     private void showPseudoCPromptDialog() {

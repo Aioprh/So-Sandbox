@@ -101,122 +101,15 @@ public class RegisterNativesActivity extends AppCompatActivity {
         executeHook(handle, "JNI_OnLoad", "256", "4096");
     }
 
-    private void callCloudForData(long handle) {
-        String deviceId = android.provider.Settings.Secure.getString(
-            getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
-
-        // 打印设备ID（用于添加到授权列表）
-        android.util.Log.d("DTZC", "Device ID: " + deviceId);
-        android.util.Log.d("DTZC", "Device Fingerprint: " + generateDeviceFingerprint());
-
-        // 生成设备指纹（包含更多信息）
-        String deviceFingerprint = generateDeviceFingerprint();
-
-        long timestamp = System.currentTimeMillis();
-
-        // 简单签名（实际应该用更安全的方式）
-        String sign = md5(deviceFingerprint + timestamp + "dtzc-key-2024").substring(0, 16);
-
-        // 读取服务器地址（支持本地调试）
-        android.content.SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
-        String serverUrl = "http://chahaoma.xyz:8902";
-        android.util.Log.d("DTZC", "Server URL: " + serverUrl);
-
-        // 使用HTTP调用云函数
-        new Thread(() -> {
-            try {
-                java.net.URL url = new java.net.URL(serverUrl + "/api/DTZC");
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-                conn.setDoOutput(true);
-                
-                // 构建参数
-                String params = "deviceId=" + java.net.URLEncoder.encode(deviceId, "UTF-8") +
-                              "&fingerprint=" + java.net.URLEncoder.encode(deviceFingerprint, "UTF-8") +
-                              "&timestamp=" + timestamp +
-                              "&sign=" + java.net.URLEncoder.encode(sign, "UTF-8");
-                
-                java.io.OutputStream os = conn.getOutputStream();
-                os.write(params.getBytes("UTF-8"));
-                os.flush();
-                os.close();
-                
-                // 读取响应
-                int responseCode = conn.getResponseCode();
-                java.io.InputStream is = conn.getInputStream();
-                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                reader.close();
-                
-                // 解析响应
-                org.json.JSONObject json = new org.json.JSONObject(response.toString());
-                
-                if (json.getBoolean("ok")) {
-                    org.json.JSONObject data = json.getJSONObject("data");
-                    String cloudSymbol = data.getString("symbol");
-                    String cloudMaxCapture = data.getString("maxCapture");
-                    String cloudPageSize = data.getString("pageSize");
-                    
-                    // C层解密并执行Hook（安全：密钥和数据都在so中）
-                    String capturedData = executeCloudHookNative(handle, cloudSymbol, cloudMaxCapture, cloudPageSize, deviceFingerprint);
-                    
-                    handler.post(() -> {
-                        progressBar.setVisibility(View.GONE);
-                        if (capturedData != null && !capturedData.isEmpty()) {
-                            tvStatus.setText("✅ 云端授权成功");
-                            tvStatus.setTextColor(getResColor(R.color.green_success));
-                            // 解析并显示捕获的函数到列表（静态注册全部显示）
-                            ParseSummary summary = parseAndDisplay(capturedData, Integer.MAX_VALUE);
-                            tvStatus.setText("✅ 云端授权成功\n动态注册: " + summary.dynamicCount + " 个，静态注册: " + summary.staticCount + " 个");
-                        } else if (capturedData != null) {
-                            // 未捕获到动态注册，显示全部静态注册
-                            ParseSummary summary = parseAndDisplay(null, Integer.MAX_VALUE);
-                            tvStatus.setText("✅ 云端授权成功（未捕获到动态注册函数）\n静态注册: " + summary.staticCount + " 个");
-                            tvStatus.setTextColor(getResColor(R.color.green_success));
-                        } else {
-                            tvStatus.setText("❌ C层处理失败");
-                            tvStatus.setTextColor(getResColor(R.color.red_error));
-                        }
-                    });
-                } else {
-                    handler.post(() -> {
-                        progressBar.setVisibility(View.GONE);
-                        // Fallback到静态模式（仅显示前5个）
-                        ParseSummary summary = parseAndDisplay(null, 5);
-                        tvStatus.setText("⚠ 未获得赞助，仅显示前 5 个静态注册（共有 " + summary.staticCount + " 个）\n激活赞助可获得动态注册功能");
-                        tvStatus.setTextColor(getResColor(R.color.text_secondary));
-                    });
-                }
-                
-            } catch (Exception e) {
-                e.printStackTrace();
-                handler.post(() -> {
-                    progressBar.setVisibility(View.GONE);
-                    // Fallback到静态模式（仅显示前5个）
-                    ParseSummary summary = parseAndDisplay(null, 5);
-                    tvStatus.setText("⚠ 未获得赞助，仅显示前 5 个静态注册（共有 " + summary.staticCount + " 个）\n激活赞助可获得动态注册功能");
-                    tvStatus.setTextColor(getResColor(R.color.text_secondary));
-                });
-            }
-        }).start();
-    }
     
-    /**
-     * C层解密并执行云端Hook（安全：解密在so中完成）
-     * @return 成功返回 "symbol=xxx,maxCapture=yyy,pageSize=zzz"，失败返回null
-     */
-    private native String executeCloudHookNative(long handle, String encryptedSymbol, 
-                                                    String encryptedMaxCapture, String encryptedPageSize,
-                                                    String deviceFingerprint);
     
-    private void executeHook(long handle, String cloudSymbol, String cloudMaxCapture, String cloudPageSize) {
+    
+    
+    
+    
+    private void executeHook(long handle, String symbol, String maxCapture, String pageSize) {
         executor.execute(() -> {
-            // 设置应用的ClassLoader
+            // 设置应用的 ClassLoader
             try {
                 NativeInvoker.setClassLoader(getClassLoader());
             } catch (Exception e) { /* ignore */ }
@@ -229,8 +122,8 @@ public class RegisterNativesActivity extends AppCompatActivity {
             // 仅在 callJniOnLoad 前后安装/卸载 hook，不影响 WebView 等其他库
             try { NativeInvoker.hookRegisterNatives(); } catch (Exception e) { /* ignore */ }
 
-            // 调用目标 SO 的 JNI_OnLoad（传递云端加密数据）
-            String result = NativeInvoker.callJniOnLoad(handle, cloudSymbol, cloudMaxCapture, cloudPageSize);
+            // 调用目标 SO 的 JNI_OnLoad
+            String result = NativeInvoker.callJniOnLoad(handle, symbol, maxCapture, pageSize);
 
             // 立即卸载 hook，恢复原始 RegisterNatives
             try { NativeInvoker.unhookRegisterNatives(); } catch (Exception e) { /* ignore */ }
@@ -243,140 +136,6 @@ public class RegisterNativesActivity extends AppCompatActivity {
                 handleResult(result, captured);
             });
         });
-    }
-    
-    private String md5(String s) {
-        try {
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(s.getBytes());
-            StringBuilder sb = new StringBuilder();
-            for (byte b : digest) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (Exception e) {
-            return "";
-        }
-    }
-    
-    private String generateDeviceFingerprint() {
-        try {
-            // 收集设备信息
-            String androidId = android.provider.Settings.Secure.getString(
-                getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
-            
-            String fingerprint = androidId + "|" +
-                android.os.Build.BRAND + "|" +
-                android.os.Build.MODEL + "|" +
-                android.os.Build.MANUFACTURER + "|" +
-                android.os.Build.VERSION.SDK_INT + "|" +
-                android.os.Build.VERSION.RELEASE;
-            
-            // 获取应用签名哈希
-            try {
-                android.content.pm.PackageManager pm = getPackageManager();
-                android.content.pm.PackageInfo packageInfo = pm.getPackageInfo(
-                    getPackageName(), android.content.pm.PackageManager.GET_SIGNATURES);
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    android.content.pm.Signature[] signatures = packageInfo.signatures;
-                    if (signatures != null && signatures.length > 0) {
-                        fingerprint += "|" + md5(signatures[0].toCharsString());
-                    }
-                }
-            } catch (Exception e) {
-                // 忽略签名获取失败
-            }
-            
-            // 最终哈希
-            return md5(fingerprint);
-        } catch (Exception e) {
-            return android.provider.Settings.Secure.getString(
-                getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
-        }
-    }
-    
-    private String aesDecrypt(String encrypted, String key) {
-        try {
-            // Base64解码
-            byte[] combined = android.util.Base64.decode(encrypted, android.util.Base64.NO_WRAP);
-            
-            if (combined.length < 24) {  // salt(8) + iv(16) + 至少1字节密文
-                return "";
-            }
-            
-            // 提取：salt(8) + iv(16) + ciphertext
-            byte[] salt = new byte[8];
-            byte[] iv = new byte[16];
-            byte[] ciphertext = new byte[combined.length - 24];
-            
-            System.arraycopy(combined, 0, salt, 0, 8);
-            System.arraycopy(combined, 8, iv, 0, 16);
-            System.arraycopy(combined, 24, ciphertext, 0, ciphertext.length);
-            
-            // PBKDF2派生密钥
-            javax.crypto.SecretKeyFactory factory = javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-            javax.crypto.spec.PBEKeySpec spec = new javax.crypto.spec.PBEKeySpec(
-                (key + bytesToHex(salt)).toCharArray(), salt, 10000, 256);
-            javax.crypto.SecretKey tmp = factory.generateSecret(spec);
-            byte[] derivedKey = tmp.getEncoded();
-            
-            // AES-256-CBC解密
-            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding");
-            javax.crypto.spec.SecretKeySpec keySpec = new javax.crypto.spec.SecretKeySpec(derivedKey, "AES");
-            javax.crypto.spec.IvParameterSpec ivSpec = new javax.crypto.spec.IvParameterSpec(iv);
-            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, keySpec, ivSpec);
-            byte[] decrypted = cipher.doFinal(ciphertext);
-            
-            return new String(decrypted, "UTF-8");
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "";
-        }
-    }
-    
-    private String aesEncrypt(String data, String key) {
-        try {
-            // 生成随机IV（16字节）
-            byte[] iv = new byte[16];
-            new java.security.SecureRandom().nextBytes(iv);
-            
-            // 生成随机盐（8字节）
-            byte[] salt = new byte[8];
-            new java.security.SecureRandom().nextBytes(salt);
-            
-            // 派生密钥：PBKDF2
-            javax.crypto.SecretKeyFactory factory = javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-            javax.crypto.spec.PBEKeySpec spec = new javax.crypto.spec.PBEKeySpec(
-                (key + bytesToHex(salt)).toCharArray(), salt, 10000, 256);
-            javax.crypto.SecretKey tmp = factory.generateSecret(spec);
-            byte[] derivedKey = tmp.getEncoded();
-            
-            // AES-256-CBC加密
-            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding");
-            javax.crypto.spec.SecretKeySpec keySpec = new javax.crypto.spec.SecretKeySpec(derivedKey, "AES");
-            javax.crypto.spec.IvParameterSpec ivSpec = new javax.crypto.spec.IvParameterSpec(iv);
-            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, keySpec, ivSpec);
-            byte[] encrypted = cipher.doFinal(data.getBytes("UTF-8"));
-            
-            // 组合：salt(8) + iv(16) + ciphertext
-            byte[] combined = new byte[8 + 16 + encrypted.length];
-            System.arraycopy(salt, 0, combined, 0, 8);
-            System.arraycopy(iv, 0, combined, 8, 16);
-            System.arraycopy(encrypted, 0, combined, 24, encrypted.length);
-            
-            return android.util.Base64.encodeToString(combined, android.util.Base64.NO_WRAP);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "";
-        }
-    }
-    
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
     }
 
     private void handleResult(String result, String captured) {

@@ -31,7 +31,6 @@ import androidx.viewpager2.widget.ViewPager2;
 import com.example.anative.R;
 import com.example.anative.core.DataHolder;
 import com.example.anative.core.ElfParser;
-import com.example.anative.core.LicenseManager;
 import com.example.anative.core.NativeFunction;
 import com.example.anative.core.NativeInvoker;
 import com.example.anative.core.PltEntry;

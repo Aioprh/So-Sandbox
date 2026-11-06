@@ -190,8 +190,6 @@ public class MainActivity extends AppCompatActivity {
         // 处理从其他应用打开的文件
         handleIncomingFile();
 
-        // 启动时检测更新
-        checkForUpdateOnStart();
     }
 
     /**
@@ -723,12 +721,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private static final String CHANGELOG_VERSION = "1.6";
+    private static final String CHANGELOG_VERSION = "1.7";
     private static final String CHANGELOG_TEXT =
-            "• 新增内置 MCP 服务，AI 客户端可远程调用 SO 分析能力\n" +
-            "• 新增 15 个 MCP 工具：函数/字符串/PLT/交叉引用/反汇编/伪C/Hex 读写\n" +
-            "• 设置页新增 MCP 入口，可配置端口、令牌并查看运行日志\n" +
-            "• MCP 以前台服务运行，App 退到后台仍可访问";
+            "• 移除启动时的联网更新检测与设置页更新入口\n" +
+            "• 移除赞助激活，全部功能不再需要卡密\n" +
+            "• 重新设计「关于软件」页面，改为应用介绍与使用说明\n" +
+            "• 清理第三方服务器调用与相关权限代码";
 
     private void showChangelogIfNeeded() {
         SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
@@ -845,72 +843,4 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private static final String UPDATE_URL = "https://api.github.com/repos/2452151196/So-Sandbox/releases/latest";
-
-    /**
-     * 启动时静默检测更新，有新版本才弹窗
-     */
-    private void checkForUpdateOnStart() {
-        SharedPreferences prefs = getSharedPreferences("update_prefs", MODE_PRIVATE);
-        long lastCheck = prefs.getLong("last_check_time", 0);
-        long now = System.currentTimeMillis();
-        // 每24小时最多检测一次
-        if (now - lastCheck < 24 * 60 * 60 * 1000L) return;
-        new Thread(() -> {
-            try {
-                java.net.URL url = new java.net.URL(UPDATE_URL);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-
-                java.io.BufferedReader reader = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                reader.close();
-
-                org.json.JSONObject json = new org.json.JSONObject(response.toString());
-                String latestVersion = json.getString("tag_name").replace("v", "");
-                String releaseUrl = json.getString("html_url");
-                String releaseNotes = json.optString("body", "");
-
-                String currentVersion = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-                boolean hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
-
-                prefs.edit().putLong("last_check_time", now).apply();
-
-                if (hasUpdate) {
-                    runOnUiThread(() -> {
-                        new AlertDialog.Builder(this)
-                                .setTitle("发现新版本")
-                                .setMessage("当前版本：v" + currentVersion + "\n最新版本：v" + latestVersion + "\n\n" + releaseNotes)
-                                .setPositiveButton("前往更新", (d, w) -> {
-                                    Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(releaseUrl));
-                                    startActivity(browserIntent);
-                                })
-                                .setNegativeButton("以后再说", null)
-                                .show();
-                    });
-                }
-            } catch (Exception e) {
-                Log.w("MainActivity", "更新检测失败: " + e.getMessage());
-            }
-        }).start();
-    }
-
-    private int compareVersions(String v1, String v2) {
-        String[] parts1 = v1.split("\\.");
-        String[] parts2 = v2.split("\\.");
-        int length = Math.max(parts1.length, parts2.length);
-        for (int i = 0; i < length; i++) {
-            int p1 = i < parts1.length ? Integer.parseInt(parts1[i]) : 0;
-            int p2 = i < parts2.length ? Integer.parseInt(parts2[i]) : 0;
-            if (p1 != p2) return p1 - p2;
-        }
-        return 0;
-    }
 }

@@ -18,7 +18,6 @@ import androidx.fragment.app.DialogFragment;
 import com.example.anative.R;
 import com.example.anative.core.DataHolder;
 import com.example.anative.core.ElfParser;
-import com.example.anative.core.LicenseManager;
 import com.example.anative.core.NativeFunction;
 import com.example.anative.core.XRefScanner;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
@@ -28,8 +27,6 @@ public class FunctionOptionsDialog extends DialogFragment {
 
     private NativeFunction function;
     private long baseAddress;
-
-    private LicenseManager licenseManager;
 
     public static FunctionOptionsDialog newInstance(NativeFunction func, long baseAddress) {
         FunctionOptionsDialog dialog = new FunctionOptionsDialog();

@@ -107,6 +107,9 @@
         <activity
             android:name=".ui.McpActivity"
             android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.AboutActivity"
+            android:parentActivityName=".ui.SettingsActivity" />
 
         <!-- MCP 前台服务，保证后台可被客户端访问 -->
         <service
