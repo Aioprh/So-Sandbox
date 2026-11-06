@@ -573,6 +573,26 @@ public class MainActivity extends AppCompatActivity {
         String baseText = baseAddr != 0 ? String.format("基址: 0x%X", baseAddr) : "静态分析模式";
         binding.tvBaseAddr.setText(baseText);
         binding.tvFuncCount.setText(String.format("函数: %d (字符串/PLT按需加载)", funcCount));
+        updateFingerprint();
+    }
+
+    /**
+     * 根据已解析的函数/字符串/PLT 给出库指纹（Unity、Flutter、加固等）。
+     */
+    private void updateFingerprint() {
+        String soPath = DataHolder.getInstance().getSoPath();
+        if (soPath == null || soPath.isEmpty()) {
+            binding.tvFingerprint.setVisibility(android.view.View.GONE);
+            return;
+        }
+        java.util.List<com.example.anative.core.LibraryFingerprint.Match> matches =
+                com.example.anative.core.LibraryFingerprint.detect(soPath,
+                        DataHolder.getInstance().getFunctions(),
+                        DataHolder.getInstance().getStrings(),
+                        DataHolder.getInstance().getPltEntries());
+        binding.tvFingerprint.setText("特征: "
+                + com.example.anative.core.LibraryFingerprint.summary(matches));
+        binding.tvFingerprint.setVisibility(android.view.View.VISIBLE);
     }
 
     private void showLoading(boolean show) {
@@ -623,6 +643,12 @@ public class MainActivity extends AppCompatActivity {
             Intent intent = new Intent(this, SettingsActivity.class);
             startActivity(intent);
             return true;
+        } else if (item.getItemId() == R.id.action_string_decoder) {
+            startActivity(new Intent(this, StringDecoderActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_global_search) {
+            startActivity(new Intent(this, GlobalSearchActivity.class));
+            return true;
         } else if (item.getItemId() == R.id.action_view_crash_log) {
             if (CrashHandler.hasCrashLog(this)) {
                 startActivity(new Intent(this, CrashActivity.class));
@@ -637,6 +663,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        updateFingerprint();
         // 检查从设置页面返回后，主题是否发生变化
         int newMode = AppCompatDelegate.getDefaultNightMode();
         if (newMode != currentNightMode && newMode != -1) {
@@ -721,12 +748,13 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private static final String CHANGELOG_VERSION = "1.7";
+    private static final String CHANGELOG_VERSION = "1.8";
     private static final String CHANGELOG_TEXT =
-            "• 移除启动时的联网更新检测与设置页更新入口\n" +
-            "• 移除赞助激活，全部功能不再需要卡密\n" +
-            "• 重新设计「关于软件」页面，改为应用介绍与使用说明\n" +
-            "• 清理第三方服务器调用与相关权限代码";
+            "• 新增修改记录：补丁差异可视，支持逐条撤销/重做与全部回滚\n" +
+            "• 新增全局搜索：函数名、地址、字符串一处搜完\n" +
+            "• 新增字符串解码：Base64/Hex/URL/XOR 爆破/RC4\n" +
+            "• 新增库指纹：识别 Unity、Flutter、UPX、加固等特征\n" +
+            "• MCP 新增特征码搜索、批量修改、差异查看、报告导出与只读模式";
 
     private void showChangelogIfNeeded() {
         SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);

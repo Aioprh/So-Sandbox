@@ -74,6 +74,8 @@ public class SettingsActivity extends AppCompatActivity {
     private CardView cardFunctionDiscoveryMode;
     private CardView cardAbout;
     private CardView cardMcp;
+    private CardView cardPatch;
+    private TextView tvPatchStatus;
     private TextView tvMcpStatus;
     private TextView tvPseudoCPromptPreview;
     private SharedPreferences prefs;
@@ -125,6 +127,8 @@ public class SettingsActivity extends AppCompatActivity {
         cardFunctionDiscoveryMode = findViewById(R.id.card_function_discovery_mode);
         cardAbout = findViewById(R.id.card_about);
         cardMcp = findViewById(R.id.card_mcp);
+        cardPatch = findViewById(R.id.card_patch);
+        tvPatchStatus = findViewById(R.id.tv_patch_status);
         tvMcpStatus = findViewById(R.id.tv_mcp_status);
 
 
@@ -133,6 +137,7 @@ public class SettingsActivity extends AppCompatActivity {
         updateAboutSummary();
         updateFunctionDiscoveryModeSummary();
         updateMcpStatus();
+        updatePatchStatus();
 
         cardAiSettings.setOnClickListener(v -> showAiSettingsDialog());
         cardCodeFontSize.setOnClickListener(v -> showCodeFontSizeDialog());
@@ -141,6 +146,8 @@ public class SettingsActivity extends AppCompatActivity {
                 new Intent(SettingsActivity.this, AboutActivity.class)));
         cardMcp.setOnClickListener(v -> startActivity(
                 new Intent(SettingsActivity.this, McpActivity.class)));
+        cardPatch.setOnClickListener(v -> startActivity(
+                new Intent(SettingsActivity.this, PatchListActivity.class)));
     }
 
     private void updateMcpStatus() {
@@ -160,6 +167,20 @@ public class SettingsActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         updateMcpStatus();
+        updatePatchStatus();
+    }
+
+    private void updatePatchStatus() {
+        if (tvPatchStatus == null) {
+            return;
+        }
+        int total = com.example.anative.core.PatchManager.getInstance().getTotalCount();
+        int active = com.example.anative.core.PatchManager.getInstance().getActiveCount();
+        if (total == 0) {
+            tvPatchStatus.setText("暂无修改记录");
+        } else {
+            tvPatchStatus.setText("共 " + total + " 条 · 生效 " + active + " 条");
+        }
     }
 
     private void updateAiStatus() {

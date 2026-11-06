@@ -7,6 +7,7 @@ import com.example.anative.core.DataHolder;
 import com.example.anative.core.ElfParser;
 import com.example.anative.core.NativeFunction;
 import com.example.anative.core.NativeInvoker;
+import com.example.anative.core.PatchManager;
 import com.example.anative.core.PltEntry;
 import com.example.anative.core.XRefScanner;
 
@@ -33,7 +34,7 @@ import java.util.Map;
 public class McpTools {
 
     public static final String SERVER_NAME = "so-sandbox";
-    public static final String SERVER_VERSION = "1.6.0";
+    public static final String SERVER_VERSION = "1.8.0";
 
     private static final int MAX_TEXT_OUTPUT = 120000;
     private static final int MAX_TABLE_STRINGS = 40000;
@@ -150,6 +151,34 @@ public class McpTools {
                         "hex", prop("string", "十六进制字节串，可含空格，例如 \"1f 20 03 d5\"")
                 ).put("required", new JSONArray().put("offset").put("hex"))));
 
+        tools.put(tool("so_search_bytes", "按字节特征搜索",
+                "在文件中搜索字节序列，支持 ?? 通配（如 \"1F 20 03 D5\" 或 \"1f??03d5\"）。返回命中处的虚拟地址与上下文。",
+                schema(
+                        "pattern", prop("string", "字节特征，空格可选，?? 表示通配"),
+                        "offset", offsetProp("可选起始虚拟地址"),
+                        "size", prop("integer", "可选扫描字节数，默认扫描到文件末尾"),
+                        "limit", prop("integer", "最多返回条数，默认 20，上限 200")
+                ).put("required", new JSONArray().put("pattern"))));
+
+        tools.put(tool("so_patch_batch", "批量修改",
+                "一次提交多条修改，任一条失败会自动回滚本批次已写入的补丁。每条可用 hex 或 assembly 指定。",
+                schema(
+                        "patches", prop("array", "数组，元素形如 {\"offset\":\"0x1234\",\"hex\":\"1f 20 03 d5\"} 或 {\"offset\":..., \"assembly\":\"nop\"}"),
+                        "dry_run", prop("boolean", "只校验不写入，默认 false")
+                ).put("required", new JSONArray().put("patches"))));
+
+        tools.put(tool("so_diff", "查看修改差异",
+                "列出当前会话的所有补丁（原字节 / 新字节 / 是否已撤销），可用于保存前确认。",
+                schema()));
+
+        tools.put(tool("so_export_report", "导出分析报告",
+                "生成 Markdown 分析报告（文件信息、函数与字符串概要、补丁差异），默认保存到 /sdcard/SoSandbox。",
+                schema(
+                        "output", prop("string", "可选输出路径"),
+                        "top_functions", prop("integer", "按大小列出的函数数量，默认 30"),
+                        "string_samples", prop("integer", "字符串样例数量，默认 50")
+                )));
+
         tools.put(tool("so_save", "保存修改后的 SO",
                 "把当前工作副本（含所有修改）另存为新文件，默认保存到 /sdcard/SoSandbox/<原名>_saved.so。",
                 schema(
@@ -201,6 +230,14 @@ public class McpTools {
                     return text(writeAsm(arguments));
                 case "so_write_hex":
                     return text(writeHex(arguments));
+                case "so_search_bytes":
+                    return text(searchBytes(arguments));
+                case "so_patch_batch":
+                    return text(patchBatch(arguments));
+                case "so_diff":
+                    return text(PatchManager.getInstance().diff());
+                case "so_export_report":
+                    return text(exportReport(arguments));
                 case "so_save":
                     return text(save(arguments));
                 case "so_recognize_function":
@@ -243,6 +280,11 @@ public class McpTools {
         sb.append("PLT 条目: ").append(plt == null ? 0 : plt.size()).append('\n');
         sb.append("未保存修改: ").append(holder.hasUnsavedChanges() ? "是" : "否")
                 .append("（指令修改 ").append(holder.getModifiedCount()).append(" 条）\n");
+        sb.append("补丁记录: ").append(PatchManager.getInstance().getTotalCount())
+                .append(" 条，生效 ").append(PatchManager.getInstance().getActiveCount()).append(" 条\n");
+        if (McpPrefs.isReadOnly(context)) {
+            sb.append("模式: 只读（写入类工具已禁用）\n");
+        }
         return sb.toString();
     }
 
@@ -681,15 +723,14 @@ public class McpTools {
             return sb.toString();
         }
 
+        requireWritable();
         // 自己算文件偏移再写，避免原生 patchInstruction 里 vaddr==fileOffset 的简化假设
         long fileOffset = ElfParser.virtualAddrToFileOffset(path, virtualOffset);
-        try (RandomAccessFile raf = new RandomAccessFile(path, "rw")) {
-            if (fileOffset < 0 || fileOffset + encoded.length > raf.length()) {
-                throw new ToolException("写入越界: 文件偏移 0x"
-                        + String.format(Locale.US, "%X", fileOffset) + " 超出文件大小");
-            }
-            raf.seek(fileOffset);
-            raf.write(encoded);
+        try {
+            PatchManager.getInstance().apply(path, fileOffset, encoded,
+                    PatchManager.Kind.ASM, "汇编: " + assembly, virtualOffset);
+        } catch (IOException e) {
+            throw new ToolException("写入失败: " + e.getMessage());
         }
         int written = encoded.length;
         DataHolder.getInstance().putModifiedInstruction(virtualOffset, assembly);
@@ -712,17 +753,15 @@ public class McpTools {
             throw new ToolException("hex 参数为空或格式非法");
         }
         String path = requirePath();
+        requireWritable();
         long fileOffset = ElfParser.virtualAddrToFileOffset(path, virtualOffset);
 
-        try (RandomAccessFile raf = new RandomAccessFile(path, "rw")) {
-            if (fileOffset < 0 || fileOffset + bytes.length > raf.length()) {
-                throw new ToolException("写入越界: 文件偏移 0x"
-                        + String.format(Locale.US, "%X", fileOffset) + " 超出文件大小");
-            }
-            raf.seek(fileOffset);
-            raf.write(bytes);
+        try {
+            PatchManager.getInstance().apply(path, fileOffset, bytes,
+                    PatchManager.Kind.HEX, "字节: " + toHex(bytes), virtualOffset);
+        } catch (IOException e) {
+            throw new ToolException("写入失败: " + e.getMessage());
         }
-        DataHolder.getInstance().markFileModified();
         McpLog.info("MCP 修改字节 @0x" + String.format(Locale.US, "%X", virtualOffset)
                 + " 长度 " + bytes.length);
 
@@ -797,6 +836,292 @@ public class McpTools {
     }
 
     // ==================== 内部工具 ====================
+
+    private String searchBytes(JSONObject args) throws Exception {
+        String path = requirePath();
+        String patternText = optString(args, "pattern");
+        if (patternText == null || patternText.trim().isEmpty()) {
+            throw new ToolException("缺少参数 pattern");
+        }
+        String compact = patternText.replace(" ", "").replace("-", "").trim();
+        if (compact.isEmpty() || compact.length() % 2 != 0) {
+            throw new ToolException("pattern 需为偶数个十六进制字符，例如 1F 20 03 D5 或 1f??03d5");
+        }
+        int patternLength = compact.length() / 2;
+        byte[] pattern = new byte[patternLength];
+        boolean[] mask = new boolean[patternLength];
+        for (int i = 0; i < patternLength; i++) {
+            String pair = compact.substring(i * 2, i * 2 + 2);
+            if (pair.equals("??") || pair.equals("**")) {
+                mask[i] = false;
+            } else {
+                try {
+                    pattern[i] = (byte) Integer.parseInt(pair, 16);
+                } catch (NumberFormatException e) {
+                    throw new ToolException("非法字节: " + pair);
+                }
+                mask[i] = true;
+            }
+        }
+        if (patternLength == 0) {
+            throw new ToolException("pattern 为空");
+        }
+
+        long startVa = 0;
+        if (args.has("offset") && !args.isNull("offset")) {
+            startVa = requireOffset(args, "offset");
+        }
+        long startFile = startVa > 0 ? ElfParser.virtualAddrToFileOffset(path, startVa) : 0;
+        long size = args.optLong("size", 0);
+        int limit = clamp(args.optInt("limit", 20), 1, 200);
+
+        File file = new File(path);
+        long end = size > 0 ? Math.min(file.length(), startFile + size) : file.length();
+        if (startFile >= end) {
+            throw new ToolException("扫描范围为空");
+        }
+
+        List<ElfParser.SectionInfo> sections = ElfParser.parseSections(path);
+        StringBuilder sb = new StringBuilder();
+        int found = 0;
+        long lastMatch = -1;
+        int chunkSize = 1 << 20;
+        byte[] buffer = new byte[chunkSize + patternLength];
+
+        try (RandomAccessFile raf = new RandomAccessFile(path, "r")) {
+            long pos = startFile;
+            outer:
+            while (pos < end) {
+                int toRead = (int) Math.min(buffer.length, end - pos);
+                raf.seek(pos);
+                raf.readFully(buffer, 0, toRead);
+                int lastStart = toRead - patternLength;
+                for (int i = 0; i <= lastStart; i++) {
+                    boolean matched = true;
+                    for (int k = 0; k < patternLength; k++) {
+                        if (mask[k] && buffer[i + k] != pattern[k]) {
+                            matched = false;
+                            break;
+                        }
+                    }
+                    if (!matched) {
+                        continue;
+                    }
+                    long fileOffset = pos + i;
+                    if (fileOffset <= lastMatch) {
+                        continue;
+                    }
+                    lastMatch = fileOffset;
+                    long va = mapToVirtual(sections, fileOffset);
+                    int ctxStart = Math.max(0, i - 8);
+                    int ctxEnd = Math.min(toRead, i + patternLength + 8);
+                    sb.append(String.format(Locale.US, "0x%X  (off 0x%X)  ", va, fileOffset));
+                    for (int k = ctxStart; k < ctxEnd; k++) {
+                        sb.append(String.format(Locale.US, "%02X ", buffer[k] & 0xFF));
+                    }
+                    sb.append('\n');
+                    found++;
+                    if (found >= limit) {
+                        break outer;
+                    }
+                }
+                if (toRead < buffer.length) {
+                    break;
+                }
+                pos += toRead - (patternLength - 1);
+            }
+        }
+
+        if (found == 0) {
+            return "未找到匹配: " + patternText;
+        }
+        StringBuilder head = new StringBuilder();
+        head.append("匹配 ").append(found).append(" 处");
+        if (found >= limit) {
+            head.append("（结果已截断，可增大 limit）");
+        }
+        head.append('\n');
+        return head + sb.toString();
+    }
+
+    private static long mapToVirtual(List<ElfParser.SectionInfo> sections, long fileOffset) {
+        for (ElfParser.SectionInfo section : sections) {
+            if (section.size > 0 && fileOffset >= section.offset
+                    && fileOffset < section.offset + section.size && section.virtualAddress > 0) {
+                return section.virtualAddress + (fileOffset - section.offset);
+            }
+        }
+        return fileOffset;
+    }
+
+    private String patchBatch(JSONObject args) throws Exception {
+        String path = requirePath();
+        JSONArray patches = args.optJSONArray("patches");
+        if (patches == null || patches.length() == 0) {
+            throw new ToolException("缺少参数 patches（非空数组）");
+        }
+        boolean dryRun = args.optBoolean("dry_run", false);
+        if (!dryRun) {
+            requireWritable();
+        }
+
+        List<Integer> applied = new ArrayList<>();
+        StringBuilder sb = new StringBuilder();
+        sb.append(dryRun ? "批量校验（dry_run，不写入）\n" : "批量修改\n");
+
+        for (int i = 0; i < patches.length(); i++) {
+            JSONObject item = patches.getJSONObject(i);
+            long virtualAddress = requireOffset(item, "offset");
+            String hex = optString(item, "hex");
+            String assembly = optString(item, "assembly");
+
+            byte[] bytes;
+            String description;
+            if (hex != null && !hex.trim().isEmpty()) {
+                bytes = parseHex(hex);
+                description = "字节: " + toHex(bytes);
+            } else if (assembly != null && !assembly.trim().isEmpty()) {
+                bytes = NativeInvoker.assembleInstruction(assembly, virtualAddress);
+                if (bytes == null || bytes.length == 0) {
+                    String err = NativeInvoker.getLastAssembleError();
+                    throw new ToolException("第 " + (i + 1) + " 条汇编失败"
+                            + (err == null || err.isEmpty() ? "" : ": " + err));
+                }
+                description = "汇编: " + assembly;
+            } else {
+                throw new ToolException("第 " + (i + 1) + " 条缺少 hex 或 assembly");
+            }
+            if (bytes.length == 0) {
+                throw new ToolException("第 " + (i + 1) + " 条数据为空");
+            }
+
+            if (dryRun) {
+                sb.append(String.format(Locale.US, "  #%d 0x%X  %s  OK\n",
+                        i + 1, virtualAddress, toHex(bytes)));
+                continue;
+            }
+
+            try {
+                long fileOffset = ElfParser.virtualAddrToFileOffset(path, virtualAddress);
+                PatchManager.Patch patch = PatchManager.getInstance().apply(path, fileOffset, bytes,
+                        PatchManager.Kind.BATCH, "批量 #" + (i + 1) + " " + description, virtualAddress);
+                applied.add(patch.id);
+                sb.append(String.format(Locale.US, "  #%d 0x%X  %s  已写入\n",
+                        i + 1, virtualAddress, toHex(bytes)));
+            } catch (Exception e) {
+                int rolledBack = 0;
+                for (int id : applied) {
+                    try {
+                        if (PatchManager.getInstance().undo(id)) {
+                            rolledBack++;
+                        }
+                    } catch (IOException ignored) {
+                        // 继续回滚其余条目
+                    }
+                }
+                throw new ToolException("第 " + (i + 1) + " 条失败，已回滚 "
+                        + rolledBack + " 条: " + e.getMessage());
+            }
+        }
+
+        if (!dryRun) {
+            sb.append("共写入 ").append(applied.size()).append(" 条，可用 so_diff 查看。\n");
+        }
+        return sb.toString();
+    }
+
+    private String exportReport(JSONObject args) throws Exception {
+        String path = requirePath();
+        DataHolder holder = DataHolder.getInstance();
+        int topFunctions = clamp(args.optInt("top_functions", 30), 1, 200);
+        int stringSamples = clamp(args.optInt("string_samples", 50), 0, 500);
+
+        StringBuilder md = new StringBuilder();
+        md.append("# SoSandbox 分析报告\n\n");
+        md.append("- 文件: `").append(path).append("`\n");
+        File file = new File(path);
+        md.append("- 大小: ").append(file.length()).append(" 字节\n");
+        md.append("- 基址: ").append(holder.getBaseAddress() > 0
+                ? String.format(Locale.US, "0x%X", holder.getBaseAddress()) : "静态分析(0)").append('\n');
+        md.append("- 函数: ").append(holder.getFunctions() == null ? 0 : holder.getFunctions().size()).append('\n');
+        md.append("- 字符串: ").append(holder.getStrings() == null ? 0 : holder.getStrings().size()).append('\n');
+        md.append("- PLT: ").append(holder.getPltEntries() == null ? 0 : holder.getPltEntries().size()).append("\n\n");
+
+        md.append("## 节表\n\n| # | 名称 | 类型 | 虚拟地址 | 文件偏移 | 大小 |\n|---|---|---|---|---|---|\n");
+        for (ElfParser.SectionInfo section : ElfParser.parseSections(path)) {
+            md.append(String.format(Locale.US, "| %d | %s | %s | 0x%X | 0x%X | 0x%X |\n",
+                    section.index, safe(section.name), safe(section.getTypeName()),
+                    section.virtualAddress, section.offset, section.size));
+        }
+
+        List<NativeFunction> functions = holder.getFunctions();
+        if (functions != null && !functions.isEmpty()) {
+            List<NativeFunction> sorted = new ArrayList<>(functions);
+            sorted.sort((a, b) -> Long.compare(b.getSize(), a.getSize()));
+            md.append("\n## 最大的函数（Top ").append(Math.min(topFunctions, sorted.size())).append("）\n\n");
+            md.append("| 地址 | 大小 | 名称 |\n|---|---|---|\n");
+            for (int i = 0; i < Math.min(topFunctions, sorted.size()); i++) {
+                NativeFunction function = sorted.get(i);
+                md.append(String.format(Locale.US, "| 0x%X | %d | %s |\n",
+                        function.getOffset(), function.getSize(), safe(function.getDemangledName())));
+            }
+        }
+
+        List<ElfParser.StringEntry> strings = holder.getStrings();
+        if (strings != null && stringSamples > 0) {
+            md.append("\n## 字符串样例\n\n```\n");
+            int count = 0;
+            for (ElfParser.StringEntry entry : strings) {
+                if (entry == null || entry.value == null || entry.value.isEmpty() || isNoisy(entry)) {
+                    continue;
+                }
+                md.append(String.format(Locale.US, "0x%X  %s\n", entry.virtualAddress, entry.value));
+                if (++count >= stringSamples) {
+                    break;
+                }
+            }
+            md.append("```\n");
+        }
+
+        String diff = PatchManager.getInstance().diff();
+        if (!diff.startsWith("暂无")) {
+            md.append("\n## 修改记录\n\n```\n").append(diff).append("```\n");
+        }
+
+        String output = optString(args, "output");
+        File dest;
+        if (output != null && !output.isEmpty()) {
+            dest = new File(output);
+        } else {
+            File dir = new File(Environment.getExternalStorageDirectory(), "SoSandbox");
+            if (!dir.exists() && !dir.mkdirs()) {
+                dir = context.getExternalFilesDir(null);
+            }
+            String name = file.getName();
+            if (name.endsWith(".so")) {
+                name = name.substring(0, name.length() - 3);
+            }
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+                    .format(new java.util.Date());
+            dest = new File(dir, name + "_report_" + stamp + ".md");
+        }
+        File parent = dest.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new ToolException("无法创建输出目录: " + parent);
+        }
+        try (FileOutputStream fos = new FileOutputStream(dest)) {
+            fos.write(md.toString().getBytes("UTF-8"));
+            fos.getFD().sync();
+        }
+        McpLog.info("MCP 导出报告 -> " + dest.getAbsolutePath());
+        return "报告已生成: " + dest.getAbsolutePath() + "\n大小: " + dest.length() + " 字节\n";
+    }
+
+    private void requireWritable() throws ToolException {
+        if (McpPrefs.isReadOnly(context)) {
+            throw new ToolException("MCP 当前为只读模式，写入已被拒绝。可在 App 的 MCP 页面关闭只读模式。");
+        }
+    }
 
     private String requirePath() throws ToolException {
         String path = DataHolder.getInstance().getSoPath();

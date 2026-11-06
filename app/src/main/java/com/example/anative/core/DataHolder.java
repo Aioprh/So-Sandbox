@@ -105,6 +105,8 @@ public class DataHolder {
         // 清除dlopen句柄和基址，避免JNI_OnLoad重复调用
         this.dlopenHandle = 0;
         this.baseAddress = 0;
+        // 切换文件时清空补丁记录（原始文件不受影响）
+        PatchManager.getInstance().resetFor(soPath);
     }
 
     public String getSoPath() {

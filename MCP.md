@@ -85,6 +85,10 @@ claude mcp add --transport http so-sandbox http://192.168.1.20:8765/mcp \
 | `so_list_sections` | 节表（类型/标志/地址/大小） | — |
 | `so_write_asm` | 改写汇编指令（可 `dry_run` 预演） | `offset`、`assembly`、`dry_run` |
 | `so_write_hex` | 改写字节 | `offset`、`hex` |
+| `so_search_bytes` | 特征码/字节搜索（支持 ??） | `pattern`、`offset`、`size`、`limit` |
+| `so_patch_batch` | 批量修改，失败自动回滚 | `patches`、`dry_run` |
+| `so_diff` | 查看修改差异与撤销状态 | 无 |
+| `so_export_report` | 导出 Markdown 分析报告 | `output`、`top_functions`、`string_samples` |
 | `so_save` | 另存修改后的 SO | `output` |
 | `so_recognize_function` | 把地址登记为函数（符号被剥离时） | `offset`、`size` |
 
@@ -93,6 +97,8 @@ claude mcp add --transport http so-sandbox http://192.168.1.20:8765/mcp \
 - **所有地址都是 ELF 虚拟地址**（与 App 函数列表里的偏移一致），支持 `0x1234` 或十进制字符串。
 - `function` 支持精确名、demangle 名与唯一子串匹配；重名时会要求改用 `offset`。
 - 修改类工具写入的是 App 私有工作副本，**原始 SO 不会被改动**；需要落地时调用 `so_save`。
+- 可在 App 的 MCP 页面开启「只读模式」，开启后 `so_write_asm`、`so_write_hex`、`so_patch_batch` 会被拒绝。
+- 每次写入都会记录为补丁，可用 `so_diff` 查看，或在「设置 → 修改记录」里逐条撤销/重做。
 
 ---
 
@@ -120,7 +126,7 @@ so_save      {}
 ## 5. 协议与实现细节
 
 - JSON-RPC 2.0，支持批量请求；协议版本在 `initialize` 协商（`2025-06-18` / `2025-03-26` / `2024-11-05`）
-- 能力：`tools`（15 个工具）、`logging`；`resources/list`、`prompts/list` 返回空列表
+- 能力：`tools`（19 个工具）、`logging`；`resources/list`、`prompts/list` 返回空列表
 - 传输：
   - `POST /mcp` → Streamable HTTP，单次请求-响应（`Content-Type: application/json`）
   - `GET /sse` + `POST /messages?sessionId=` → 旧版 HTTP+SSE
@@ -133,7 +139,7 @@ so_save      {}
 app/src/main/java/com/example/anative/mcp/
 ├── McpServer.java    # HTTP 服务 + 双传输
 ├── McpProtocol.java  # JSON-RPC 分发、initialize 协商
-├── McpTools.java     # 15 个工具的实现
+├── McpTools.java     # 19 个工具的实现
 ├── McpManager.java   # 生命周期（单例）
 ├── McpService.java   # 前台服务，保证后台可访问
 ├── McpPrefs.java     # 端口/令牌/开关

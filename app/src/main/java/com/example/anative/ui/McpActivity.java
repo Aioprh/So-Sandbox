@@ -41,6 +41,7 @@ public class McpActivity extends AppCompatActivity {
     private static final int REQUEST_NOTIFICATION = 4001;
 
     private SwitchCompat switchMcp;
+    private SwitchCompat switchReadOnly;
     private TextView tvStatus;
     private TextView tvEndpoint;
     private TextView tvSse;
@@ -72,6 +73,7 @@ public class McpActivity extends AppCompatActivity {
         toolbar.setNavigationOnClickListener(v -> finish());
 
         switchMcp = findViewById(R.id.switch_mcp);
+        switchReadOnly = findViewById(R.id.switch_read_only);
         tvStatus = findViewById(R.id.tv_status);
         tvEndpoint = findViewById(R.id.tv_endpoint);
         tvSse = findViewById(R.id.tv_sse);
@@ -80,6 +82,12 @@ public class McpActivity extends AppCompatActivity {
         tvTools = findViewById(R.id.tv_tools);
         tvClient = findViewById(R.id.tv_client);
         tvLog = findViewById(R.id.tv_log);
+
+        switchReadOnly.setChecked(McpPrefs.isReadOnly(this));
+        switchReadOnly.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            McpPrefs.setReadOnly(McpActivity.this, isChecked);
+            McpLog.info(isChecked ? "已开启只读模式" : "已关闭只读模式");
+        });
 
         bindActions();
     }

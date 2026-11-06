@@ -588,15 +588,15 @@ public class AsmFragment extends Fragment {
                     throw new Exception(err != null && !err.isEmpty() ? err : "汇编失败");
                 }
 
-                try (RandomAccessFile raf = new RandomAccessFile(soPath, "rw")) {
-                    raf.seek(fileOffset);
-                    raf.write(encoded);
-                }
+                com.example.anative.core.PatchManager.getInstance().apply(
+                        soPath, fileOffset, encoded,
+                        com.example.anative.core.PatchManager.Kind.ASM,
+                        "汇编: " + newAsm, virtualOffset);
+                DataHolder.getInstance().putModifiedInstruction(virtualOffset, newAsm);
 
                 handler.post(() -> {
                     pd.dismiss();
                     Toast.makeText(requireContext(), "已写入当前文件", Toast.LENGTH_SHORT).show();
-                    DataHolder.getInstance().markFileModified();
                     updateDisplay();
                 });
             } catch (Exception e) {

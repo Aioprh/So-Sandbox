@@ -1306,6 +1306,40 @@ public class ElfParser {
     }
 
     /**
+     * 文件偏移转虚拟地址（按 PT_LOAD 段反查），用于字节搜索结果定位。
+     */
+    public static long fileOffsetToVirtualAddr(String soPath, long fileOffset) {
+        try (RandomAccessFile raf = new RandomAccessFile(soPath, "r")) {
+            byte[] ehdr = new byte[64];
+            raf.readFully(ehdr);
+            if (ehdr[4] != 2) {
+                return fileOffset;
+            }
+            long phoff = readLong64(ehdr, 32);
+            int phentsize = (ehdr[54] & 0xFF) | ((ehdr[55] & 0xFF) << 8);
+            int phnum = (ehdr[56] & 0xFF) | ((ehdr[57] & 0xFF) << 8);
+
+            for (int i = 0; i < phnum; i++) {
+                byte[] phdr = new byte[phentsize];
+                raf.seek(phoff + (long) i * phentsize);
+                raf.readFully(phdr);
+                if (readInt32(phdr, 0) != 1) {
+                    continue;
+                }
+                long pOffset = readLong64(phdr, 8);
+                long pVaddr = readLong64(phdr, 16);
+                long pFilesz = readLong64(phdr, 32);
+                if (fileOffset >= pOffset && fileOffset < pOffset + pFilesz) {
+                    return pVaddr + (fileOffset - pOffset);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "file offset to VA conversion failed: " + e.getMessage());
+        }
+        return fileOffset;
+    }
+
+    /**
      * 字符串条目
      */
     public static class StringEntry {

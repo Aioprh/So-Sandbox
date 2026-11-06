@@ -26,6 +26,10 @@ SoSandbox 用于对 Android Native so 文件进行查看、分析与修改。
 - 保存修改后的 so 文件
 - AI 伪 C 配置与调用（支持 OpenAI / Gemini / 自定义接口）
 - 内置 MCP 服务：把 SO 分析能力通过 MCP 协议开放给 AI 客户端（详见 [MCP.md](MCP.md)）
+- 修改记录：可视化补丁差异，支持逐条撤销 / 重做 / 全部回滚 / 导出补丁
+- 全局搜索：一次搜函数名、地址与字符串
+- 字符串解码：Base64 / Hex / URL / 单字节 XOR 爆破 / RC4
+- 库指纹：识别 Unity、Flutter、UPX、加固壳等常见特征
 
 ## 2. 打开 so 文件
 
@@ -353,6 +357,16 @@ AI 伪 C 不内置第三方模型服务，使用前请自行准备兼容接口�
 
 • 修复部分手机选择文件时找不到 SO 文件的问题
 
+### v1.8
+
+• 新增「修改记录」：可视化补丁差异，支持逐条撤销 / 重做 / 全部回滚 / 导出补丁
+
+• 新增全局搜索与字符串解码（Base64 / Hex / URL / XOR 爆破 / RC4）
+
+• 新增库指纹识别（Unity / Flutter / UPX / 加固等）
+
+• MCP 新增 so_search_bytes、so_patch_batch、so_diff、so_export_report 与只读模式（共 19 个工具）
+
 ### v1.7
 
 • 移除启动时的联网更新检测与设置页更新入口
@@ -384,14 +398,15 @@ SoSandbox 内置了一个 MCP（Model Context Protocol）服务器，AI 客户�
 3. 复制页面上的连接地址，例如 `http://192.168.1.20:8765/mcp`
 4. 把「客户端配置」里的 JSON 粘贴到 MCP 客户端，手机与电脑需在同一局域网
 
-### 提供的能力（15 个工具）
+### 提供的能力（19 个工具）
 
 | 类别 | 工具 |
 | --- | --- |
 | 打开/状态 | `so_open`、`so_status` |
 | 结构浏览 | `so_list_functions`、`so_search_strings`、`so_list_plt`、`so_list_sections` |
 | 分析 | `so_disassemble`、`so_decompile`、`so_read_hex`、`so_xrefs`、`so_string_refs`、`so_recognize_function` |
-| 修改 | `so_write_asm`、`so_write_hex`、`so_save` |
+| 搜索/导出 | `so_search_bytes`、`so_export_report` |
+| 修改 | `so_write_asm`、`so_write_hex`、`so_patch_batch`、`so_diff`、`so_save` |
 
 ### 传输与安全
 

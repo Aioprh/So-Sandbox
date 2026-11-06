@@ -110,6 +110,15 @@
         <activity
             android:name=".ui.AboutActivity"
             android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.PatchListActivity"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.GlobalSearchActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.StringDecoderActivity"
+            android:parentActivityName=".ui.MainActivity" />
 
         <!-- MCP 前台服务，保证后台可被客户端访问 -->
         <service

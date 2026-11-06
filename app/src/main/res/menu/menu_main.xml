@@ -9,6 +9,16 @@
         app:showAsAction="always" />
 
     <item
+        android:id="@+id/action_global_search"
+        android:title="全局搜索"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_string_decoder"
+        android:title="字符串解码"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_view_crash_log"
         android:title="查看最近崩溃日志"
         app:showAsAction="never" />

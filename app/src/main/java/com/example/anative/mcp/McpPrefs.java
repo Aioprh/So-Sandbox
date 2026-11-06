@@ -20,6 +20,7 @@ public final class McpPrefs {
     public static final String KEY_TOKEN = "mcp_token";
     public static final String KEY_AUTH = "mcp_auth_required";
     public static final String KEY_LAST_CLIENT = "mcp_last_client";
+    public static final String KEY_READ_ONLY = "mcp_read_only";
 
     public static final int DEFAULT_PORT = 8765;
 
@@ -49,6 +50,15 @@ public final class McpPrefs {
 
     public static void setPort(Context context, int port) {
         prefs(context).edit().putInt(KEY_PORT, port).apply();
+    }
+
+    /** 只读模式：开启后拒绝一切写入类工具调用。 */
+    public static boolean isReadOnly(Context context) {
+        return prefs(context).getBoolean(KEY_READ_ONLY, false);
+    }
+
+    public static void setReadOnly(Context context, boolean readOnly) {
+        prefs(context).edit().putBoolean(KEY_READ_ONLY, readOnly).apply();
     }
 
     public static boolean isAuthRequired(Context context) {
