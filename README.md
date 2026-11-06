@@ -430,7 +430,7 @@ AI 伪 C 不内置第三方模型服务，使用前请自行准备兼容接口�
 - 字符串解码页新增「扫描当前 SO」：批量尝试 Base64 / Hex / URL / XOR / 反转并按可信度排序
 - 新增「导出符号脚本」：IDA `.py` / Ghidra Jython / C 头文件
 - MCP 新增 6 个工具（`so_rtti`、`so_asm_search`、`so_dependency`、`so_find_clones`、`so_auto_decode`、`so_export_script`），共 27 个
-- 新增 30 个单元测试，覆盖指令级 diff、指纹算法、RTTI 名字解析、脚本生成
+- 新增 36 个单元测试，覆盖指令级 diff、指纹算法、RTTI 名字解析、脚本生成
 
 ### v1.9
 
