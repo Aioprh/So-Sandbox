@@ -20,6 +20,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.anative.R;
+import com.example.anative.core.AnalysisCache;
 import com.example.anative.core.DataHolder;
 import com.example.anative.core.ElfParser;
 import com.example.anative.core.NativeFunction;
@@ -150,7 +151,7 @@ public class GlobalSearchActivity extends AppCompatActivity {
         tvHint.setText("正在加载字符串表…");
         new Thread(() -> {
             try {
-                List<ElfParser.StringEntry> strings = ElfParser.parseStrings(soPath);
+                List<ElfParser.StringEntry> strings = AnalysisCache.strings(this, soPath);
                 holder.setStrings(strings);
             } catch (Exception ignored) {
                 // 解析失败时保持空表，不阻塞函数搜索

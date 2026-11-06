@@ -155,9 +155,16 @@ public class XRefScanner {
             Log.d(TAG, "Func table length=" + funcTableStr.length() + ", String table length=" + strTableStr.length());
             Log.d(TAG, "First 100 chars of funcTable: " + funcTableStr.substring(0, Math.min(100, funcTableStr.length())));
 
-            String result = NativeInvoker.scanXRefsFromBytes(
-                    textBytes, textVAddr, readSize,
-                    funcTableStr, strTableStr);
+            ElfArch arch = ElfArch.detect(soPath);
+            String result;
+            if (arch.isArm32()) {
+                // 32 位没有 AArch64 的 ADRP/ADD 寻址，用纯 Java 扫描（ARM/Thumb 双通道）
+                result = Arm32Scanner.scanXrefs(textBytes, textVAddr, strTableStr);
+            } else {
+                result = NativeInvoker.scanXRefsFromBytes(
+                        textBytes, textVAddr, readSize,
+                        funcTableStr, strTableStr);
+            }
             long nativeElapsed = System.currentTimeMillis() - nativeStart;
 
             if (result == null || result.isEmpty() || result.startsWith("ERR")) {

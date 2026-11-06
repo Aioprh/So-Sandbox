@@ -148,6 +148,19 @@ public class NativeInvoker {
     public static native String disassembleBytes(byte[] bytes, long funcOffset, long funcSize, String stringTable, String pltTable, String funcTable);
 
     /**
+     * 从 byte[] 反汇编 ARM32 (A32/T32) 指令流 (静态分析模式)
+     *
+     * @param bytes      函数机器码字节
+     * @param funcOffset 函数在文件中的偏移
+     * @param funcSize   函数大小
+     * @param thumb      true 按 Thumb 解码，false 按 ARM 解码
+     * @return 汇编文本，格式与 {@link #disassembleBytes} 一致
+     */
+    public static native String disassembleBytesArm32(byte[] bytes, long funcOffset, long funcSize,
+                                                      boolean thumb, String stringTable,
+                                                      String pltTable, String funcTable);
+
+    /**
      * 从byte[]伪C反编译 (静态分析模式)
      * @param bytes 函数机器码字节
      * @param funcOffset 函数在文件中的偏移

@@ -30,6 +30,8 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.anative.R;
 import com.example.anative.FileUtils;
+import com.example.anative.core.AnalysisCache;
+import com.example.anative.core.ElfArch;
 import com.example.anative.core.ElfParser;
 import com.example.anative.core.DataHolder;
 import com.example.anative.core.NativeFunction;
@@ -253,7 +255,14 @@ public class MainActivity extends AppCompatActivity {
 
     private void setupRecentProjects() {
         recentProjects = loadRecentProjects();
-        binding.rvRecentProjects.setLayoutManager(new LinearLayoutManager(this));
+        // 平板/横屏（>=600dp）用两列，避免单列把内容拉得过宽
+        int widthDp = getResources().getConfiguration().screenWidthDp;
+        if (widthDp >= 600) {
+            binding.rvRecentProjects.setLayoutManager(
+                    new androidx.recyclerview.widget.GridLayoutManager(this, 2));
+        } else {
+            binding.rvRecentProjects.setLayoutManager(new LinearLayoutManager(this));
+        }
         recentAdapter = new RecentProjectsAdapter(recentProjects, this::onRecentProjectClick);
         binding.rvRecentProjects.setAdapter(recentAdapter);
 
@@ -450,7 +459,7 @@ public class MainActivity extends AppCompatActivity {
                 DataHolder.getInstance().setDlopenHandle(soLoader.getDlopenHandle());
                 String discoveryMode = getSharedPreferences("app_prefs", MODE_PRIVATE)
                         .getString(SettingsActivity.PREF_FUNCTION_DISCOVERY_MODE, "balanced");
-                functions = ElfParser.parseFunctions(path, discoveryMode);
+                functions = AnalysisCache.functions(this, path, discoveryMode);
                 DataHolder.getInstance().setFunctions(functions);
 
                 runOnUiThread(() -> {
@@ -498,7 +507,7 @@ public class MainActivity extends AppCompatActivity {
                 DataHolder.getInstance().setDlopenHandle(soLoader.getDlopenHandle());
                 String discoveryMode = getSharedPreferences("app_prefs", MODE_PRIVATE)
                         .getString(SettingsActivity.PREF_FUNCTION_DISCOVERY_MODE, "balanced");
-                functions = ElfParser.parseFunctions(soPath, discoveryMode);
+                functions = AnalysisCache.functions(this, soPath, discoveryMode);
                 DataHolder.getInstance().setFunctions(functions);
 
                 // 预加载字符串表和 PLT 表（反汇编 / 函数跳转识别都依赖它们）
@@ -546,7 +555,7 @@ public class MainActivity extends AppCompatActivity {
         String soPath = soLoader.getLoadedSoPath();
         if (soPath == null) return;
         try {
-            strings = ElfParser.parseStrings(soPath);
+            strings = AnalysisCache.strings(this, soPath);
         } catch (Exception e) {
             Log.e("MainActivity", "parseStrings failed: " + e.getMessage());
             strings = new ArrayList<>();
@@ -558,7 +567,7 @@ public class MainActivity extends AppCompatActivity {
         String soPath = soLoader.getLoadedSoPath();
         if (soPath == null) return;
         try {
-            pltEntries = ElfParser.parsePlt(soPath);
+            pltEntries = AnalysisCache.plt(this, soPath);
         } catch (Exception e) {
             Log.e("MainActivity", "parsePlt failed: " + e.getMessage());
             pltEntries = new ArrayList<>();
@@ -648,6 +657,12 @@ public class MainActivity extends AppCompatActivity {
             return true;
         } else if (item.getItemId() == R.id.action_global_search) {
             startActivity(new Intent(this, GlobalSearchActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_call_graph) {
+            startActivity(new Intent(this, CallGraphActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_so_diff) {
+            startActivity(new Intent(this, SoDiffActivity.class));
             return true;
         } else if (item.getItemId() == R.id.action_view_crash_log) {
             if (CrashHandler.hasCrashLog(this)) {

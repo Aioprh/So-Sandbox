@@ -198,6 +198,11 @@ public class FunctionDetailActivity extends AppCompatActivity {
         } else if (item.getItemId() == R.id.action_export) {
             exportCurrentPage();
             return true;
+        } else if (item.getItemId() == R.id.action_call_graph) {
+            android.content.Intent intent = new android.content.Intent(this, CallGraphActivity.class);
+            intent.putExtra("function_name", String.format("0x%X", funcAddr - baseAddress));
+            startActivity(intent);
+            return true;
         }
         return super.onOptionsItemSelected(item);
     }

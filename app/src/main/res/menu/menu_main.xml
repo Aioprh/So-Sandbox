@@ -14,6 +14,16 @@
         app:showAsAction="never" />
 
     <item
+        android:id="@+id/action_call_graph"
+        android:title="调用关系"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_so_diff"
+        android:title="SO 版本对比"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_string_decoder"
         android:title="字符串解码"
         app:showAsAction="never" />

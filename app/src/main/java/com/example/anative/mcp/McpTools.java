@@ -3,12 +3,16 @@ package com.example.anative.mcp;
 import android.content.Context;
 import android.os.Environment;
 
+import com.example.anative.core.CallGraph;
 import com.example.anative.core.DataHolder;
+import com.example.anative.core.DisasmBridge;
+import com.example.anative.core.ElfArch;
 import com.example.anative.core.ElfParser;
 import com.example.anative.core.NativeFunction;
 import com.example.anative.core.NativeInvoker;
 import com.example.anative.core.PatchManager;
 import com.example.anative.core.PltEntry;
+import com.example.anative.core.SoDiff;
 import com.example.anative.core.XRefScanner;
 
 import org.json.JSONArray;
@@ -192,6 +196,26 @@ public class McpTools {
                         "size", prop("integer", "可选函数大小，不传则自动估算")
                 ).put("required", new JSONArray().put("offset"))));
 
+        tools.put(tool("so_compare", "对比两个 SO",
+                "按函数名匹配两个 SO 的函数；名称不同时用代码重合度配对。返回新增/删除/变更函数清单与整体相似度。",
+                schema(
+                        "old_path", prop("string", "旧版本 SO 的绝对路径"),
+                        "new_path", prop("string", "新版本 SO 的绝对路径"),
+                        "format", enumProp(new String[]{"text", "markdown"}, "输出格式，默认 text"),
+                        "limit", prop("integer", "每组最多列出的条数，默认 50")
+                ).put("required", new JSONArray().put("old_path").put("new_path"))));
+
+        tools.put(tool("so_call_graph", "调用关系图",
+                "以指定函数为中心展开调用关系（谁调用它 / 它调用谁），可导出 Graphviz DOT 或 Mermaid。",
+                schema(
+                        "function", prop("string", "函数名"),
+                        "offset", offsetProp("函数虚拟地址"),
+                        "depth", prop("integer", "展开层数，默认 2，最大 4"),
+                        "direction", enumProp(new String[]{"both", "callers", "callees"}, "方向，默认 both"),
+                        "format", enumProp(new String[]{"text", "dot", "mermaid"}, "输出格式，默认 text"),
+                        "max_nodes", prop("integer", "节点上限，默认 200")
+                )));
+
         return tools;
     }
 
@@ -242,6 +266,10 @@ public class McpTools {
                     return text(save(arguments));
                 case "so_recognize_function":
                     return text(recognize(arguments));
+                case "so_compare":
+                    return text(compare(arguments));
+                case "so_call_graph":
+                    return text(callGraph(arguments));
                 default:
                     return error("未知工具: " + name);
             }
@@ -410,11 +438,13 @@ public class McpTools {
         String pltTable = tables()[1];
         String funcTable = tables()[2];
 
-        String code = NativeInvoker.disassembleBytes(bytes, virtualOffset, size, stringTable, pltTable, funcTable);
+        ElfArch arch = ElfArch.detect(requirePath());
+        String code = DisasmBridge.disassembleStatic(requirePath(), bytes, virtualOffset, size,
+                function.isThumb(), stringTable, pltTable, funcTable);
         if (code == null || code.isEmpty()) {
             throw new ToolException("反汇编失败（原生引擎无输出）");
         }
-        if (code.startsWith("ERR")) {
+        if (code.startsWith("ERR") && arch.isAarch64()) {
             long base = DataHolder.getInstance().getBaseAddress();
             if (base > 0) {
                 String fallback = NativeInvoker.disassembleFunctionEx(
@@ -427,6 +457,10 @@ public class McpTools {
 
         StringBuilder sb = new StringBuilder();
         sb.append("函数: ").append(function.getDemangledName()).append('\n');
+        sb.append("架构: ").append(arch.describe()).append('\n');
+        if (arch.isArm32()) {
+            sb.append("指令集: ").append(function.isThumb() ? "Thumb" : "ARM").append('\n');
+        }
         sb.append("地址: 0x").append(String.format(Locale.US, "%X", virtualOffset))
                 .append("  大小: ").append(size).append(" 字节\n\n");
         sb.append(code);
@@ -437,6 +471,19 @@ public class McpTools {
         NativeFunction function = resolveFunction(args);
         long size = resolveFunctionSize(function, 0);
         long virtualOffset = toVirtualLong(function.getOffset());
+
+        ElfArch arch = ElfArch.detect(requirePath());
+        if (arch.isArm32()) {
+            // 伪 C 生成器基于 AArch64 的寄存器语义（X0-X30 / SP / ADRP），
+            // 对 ARM32 直接输出会得到一堆无意义的伪代码，因此明确降级为汇编
+            long fileOffset = ElfParser.virtualAddrToFileOffset(requirePath(), virtualOffset);
+            byte[] bytes = readBytes(fileOffset, (int) size);
+            String asm = DisasmBridge.disassembleStatic(requirePath(), bytes, virtualOffset, size,
+                    function.isThumb(), tables()[0], tables()[1], tables()[2]);
+            return "该 SO 为 ARM32（" + arch.abi() + "），伪 C 反编译暂不支持，以下为汇编对照：\n\n"
+                    + asm;
+        }
+
         long fileOffset = ElfParser.virtualAddrToFileOffset(requirePath(), virtualOffset);
         byte[] bytes = readBytes(fileOffset, (int) size);
 
@@ -1540,5 +1587,115 @@ public class McpTools {
         ToolException(String message) {
             super(message);
         }
+    }
+
+    // ==================== 版本对比 / 调用图 ====================
+
+    private String compare(JSONObject args) throws Exception {
+        String oldPath = args.optString("old_path", "");
+        String newPath = args.optString("new_path", "");
+        if (oldPath.isEmpty() || newPath.isEmpty()) {
+            throw new ToolException("需要 old_path 与 new_path");
+        }
+        for (String p : new String[]{oldPath, newPath}) {
+            if (!new File(p).isFile()) {
+                throw new ToolException("文件不存在: " + p);
+            }
+        }
+        int limit = clamp(args.optInt("limit", 50), 1, 500);
+        long start = System.currentTimeMillis();
+        SoDiff.Result r = SoDiff.compare(oldPath, newPath);
+
+        if ("markdown".equalsIgnoreCase(args.optString("format", "text"))) {
+            return r.toMarkdown(limit);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(r.summaryLine()).append('\n');
+        sb.append("旧架构: ").append(r.oldArch).append("   新架构: ").append(r.newArch).append('\n');
+        sb.append("耗时: ").append(System.currentTimeMillis() - start).append(" ms\n");
+
+        appendDiffGroup(sb, "变更", r.changed, limit, true);
+        appendDiffGroup(sb, "新增", r.added, limit, false);
+        appendDiffGroup(sb, "删除", r.removed, limit, false);
+        return sb.toString();
+    }
+
+    private static void appendDiffGroup(StringBuilder sb, String title,
+                                        List<SoDiff.FunctionChange> list, int limit,
+                                        boolean withSimilarity) {
+        if (list.isEmpty()) return;
+        sb.append('\n').append(title).append(" (").append(list.size()).append(")\n");
+        int n = Math.min(list.size(), limit);
+        for (int i = 0; i < n; i++) {
+            SoDiff.FunctionChange c = list.get(i);
+            if (withSimilarity) {
+                sb.append(String.format(Locale.US, "  %s  %d → %d 字节  相似度 %d%%\n",
+                        c.name, c.oldSize, c.newSize, c.similarity));
+            } else {
+                long off = SoDiff.KIND_ADDED.equals(c.kind) ? c.newOffset : c.oldOffset;
+                long size = SoDiff.KIND_ADDED.equals(c.kind) ? c.newSize : c.oldSize;
+                sb.append(String.format(Locale.US, "  %s  %d 字节  @0x%X\n", c.name, size, off));
+            }
+        }
+        if (list.size() > n) {
+            sb.append("  ... 省略 ").append(list.size() - n).append(" 条\n");
+        }
+    }
+
+    private String callGraph(JSONObject args) throws Exception {
+        NativeFunction function = resolveFunction(args);
+        long funcOffset = toVirtualLong(function.getOffset());
+        int depth = clamp(args.optInt("depth", 2), 1, 4);
+        int maxNodes = clamp(args.optInt("max_nodes", 200), 2, 2000);
+        String dir = args.optString("direction", "both");
+        int direction = "callers".equals(dir) ? -1 : ("callees".equals(dir) ? 1 : 0);
+
+        DataHolder holder = DataHolder.getInstance();
+        XRefScanner scanner = holder.getXRefScanner();
+        if (scanner == null || !scanner.isScanned()) {
+            scanner = new XRefScanner();
+            scanner.scan(requirePath(), holder.getFunctions(), holder.getStrings());
+            holder.setXRefScanner(scanner);
+        }
+
+        CallGraph graph = CallGraph.ego(scanner, holder.getFunctions(),
+                funcOffset, direction, depth, maxNodes);
+
+        String format = args.optString("format", "text");
+        if ("dot".equalsIgnoreCase(format)) return graph.toDot(true);
+        if ("mermaid".equalsIgnoreCase(format)) return graph.toMermaid();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("中心: ").append(function.getDemangledName())
+                .append(String.format(Locale.US, " @0x%X", funcOffset)).append('\n');
+        sb.append("节点 ").append(graph.nodes.size())
+                .append("   边 ").append(graph.edges.size());
+        if (graph.truncated) sb.append("   （已达节点上限，结果被截断）");
+        sb.append("\n\n").append(graph.toText(maxNodes));
+
+        List<List<Long>> cycles = graph.findCycles(10);
+        if (!cycles.isEmpty()) {
+            sb.append("\n检测到 ").append(cycles.size()).append(" 处环（递归/互相调用）：\n");
+            for (List<Long> cycle : cycles) {
+                sb.append("  ");
+                for (int i = 0; i < cycle.size(); i++) {
+                    if (i > 0) sb.append(" → ");
+                    NativeFunction f = findFunctionByOffset(holder.getFunctions(), cycle.get(i));
+                    sb.append(f != null ? f.getDemangledName()
+                            : String.format(Locale.US, "sub_%X", cycle.get(i)));
+                }
+                sb.append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    private NativeFunction findFunctionByOffset(List<NativeFunction> funcs, long offset) {
+        if (funcs == null) return null;
+        for (NativeFunction f : funcs) {
+            if (toVirtualLong(f.getOffset()) == offset) return f;
+        }
+        return null;
     }
 }

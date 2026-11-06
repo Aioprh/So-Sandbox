@@ -73,9 +73,9 @@ claude mcp add --transport http so-sandbox http://192.168.1.20:8765/mcp \
 | 工具 | 作用 | 关键参数 |
 | --- | --- | --- |
 | `so_status` | 当前 SO 状态（路径、大小、模式、数量、未保存修改） | — |
-| `so_open` | 按绝对路径打开 ARM64 SO，解析函数/字符串/PLT | `path`、`discovery_mode`、`load_strings` |
+| `so_open` | 按绝对路径打开 ARM/ARM64 SO，解析函数/字符串/PLT | `path`、`discovery_mode`、`load_strings` |
 | `so_list_functions` | 列函数，支持关键字过滤与分页 | `query`、`limit`、`cursor` |
-| `so_disassemble` | ARM64 汇编（带字符串/PLT/函数名注释） | `function` 或 `offset`、`max_bytes` |
+| `so_disassemble` | 汇编（ARM64 / ARM32 自动切换，带字符串/PLT/函数名注释） | `function` 或 `offset`、`max_bytes` |
 | `so_decompile` | 本地伪 C 反编译 | `function` 或 `offset` |
 | `so_read_hex` | 读取原始字节 + ASCII 对照 | `offset`、`size` |
 | `so_search_strings` | 搜索字符串表 | `query`、`limit`、`filter_noise`、`section` |
@@ -91,6 +91,8 @@ claude mcp add --transport http so-sandbox http://192.168.1.20:8765/mcp \
 | `so_export_report` | 导出 Markdown 分析报告 | `output`、`top_functions`、`string_samples` |
 | `so_save` | 另存修改后的 SO | `output` |
 | `so_recognize_function` | 把地址登记为函数（符号被剥离时） | `offset`、`size` |
+| `so_compare` | 两个 SO 的函数级版本对比（新增/删除/变更/相似度） | `old_path`、`new_path`、`format`、`limit` |
+| `so_call_graph` | 以某函数为中心的调用关系图，可导出 DOT / Mermaid | `function` 或 `offset`、`depth`、`direction`、`format` |
 
 要点：
 
@@ -126,7 +128,7 @@ so_save      {}
 ## 5. 协议与实现细节
 
 - JSON-RPC 2.0，支持批量请求；协议版本在 `initialize` 协商（`2025-06-18` / `2025-03-26` / `2024-11-05`）
-- 能力：`tools`（19 个工具）、`logging`；`resources/list`、`prompts/list` 返回空列表
+- 能力：`tools`（21 个工具）、`logging`；`resources/list`、`prompts/list` 返回空列表
 - 传输：
   - `POST /mcp` → Streamable HTTP，单次请求-响应（`Content-Type: application/json`）
   - `GET /sse` + `POST /messages?sessionId=` → 旧版 HTTP+SSE
@@ -139,7 +141,7 @@ so_save      {}
 app/src/main/java/com/example/anative/mcp/
 ├── McpServer.java    # HTTP 服务 + 双传输
 ├── McpProtocol.java  # JSON-RPC 分发、initialize 协商
-├── McpTools.java     # 19 个工具的实现
+├── McpTools.java     # 21 个工具的实现
 ├── McpManager.java   # 生命周期（单例）
 ├── McpService.java   # 前台服务，保证后台可访问
 ├── McpPrefs.java     # 端口/令牌/开关
@@ -161,7 +163,8 @@ app/src/main/res/layout/activity_mcp.xml
 
 ## 7. 已知限制
 
-- 仅支持 ARM64（aarch64）SO；32 位与 x86_64 会被拒绝。
+- 支持 ARM64（arm64-v8a）与 ARM32（armeabi-v7a）。ARM32 为**静态分析**：反汇编自动在 ARM / Thumb 之间切换，但 `so_decompile` 会降级为汇编对照（伪 C 生成器依赖 AArch64 寄存器语义）。
 - MCP 侧固定为**静态分析模式**（不 dlopen 目标 SO），因此不提供动态调用/JNI_OnLoad 类工具。
+- `so_compare` 需要两边都能解析出函数表；完全 stripped 且无 `.dynsym` 的样本只能靠 `max_coverage` 扫描，结果可能偏少。
 - `so_xrefs` 首次扫描大库（如 libil2cpp.so）可能需要数秒。
 - 前台服务被系统回收后，回到 App 的 MCP 页面重新打开开关即可恢复。

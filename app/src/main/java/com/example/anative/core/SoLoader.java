@@ -79,9 +79,14 @@ public class SoLoader {
         loadedSoPath = targetFile.getAbsolutePath();
         Log.i(TAG, "SO copied to: " + loadedSoPath);
 
-        // 检查 ELF 架构，禁止 32 位 ARM
+        // 检查 ELF 架构。ARM32 允许打开，但只能做静态分析——64 位进程无法 dlopen 32 位 SO
         if (!checkElfArch(targetFile)) {
-            throw new IOException("不支持的 SO 文件：32 位 ARM 架构 (仅支持 64 位 ARM64)");
+            throw new IOException("不支持的文件：不是有效的 ARM/AArch64 ELF（e_machine 见日志）");
+        }
+        ElfArch arch = ElfArch.detect(targetFile.getAbsolutePath());
+        boolean arm32 = arch.isArm32();
+        if (arm32 && !arch.matchesProcess()) {
+            Log.i(TAG, "ARM32 SO on 64-bit process: static analysis only");
         }
 
         // 自动备份：仅在当前工作目录保留一份原始副本
@@ -93,8 +98,8 @@ public class SoLoader {
             Log.w(TAG, "Failed to create SO backup: " + e.getMessage());
         }
 
-        if (staticOnly) {
-            Log.i(TAG, "Static analysis only mode (user choice)");
+        if (staticOnly || arm32) {
+            Log.i(TAG, "Static analysis only mode (" + (arm32 ? "ARM32 SO" : "user choice") + ")");
             baseAddress = 0;
             return true;
         }
@@ -239,7 +244,7 @@ public class SoLoader {
     }
 
     /**
-     * 检查 ELF 文件架构，返回 true 表示支持 (64位ARM)，false 表示不支持 (32位ARM)
+     * 检查 ELF 文件架构。ARM32 与 AArch64 都接受（ARM32 走静态分析）。
      */
     private boolean checkElfArch(File soFile) {
         try (FileInputStream fis = new FileInputStream(soFile)) {
@@ -255,11 +260,13 @@ public class SoLoader {
             }
             // e_machine is at offset 18 for both ELF32 and ELF64
             int eMachine = (header[19] & 0xFF) << 8 | (header[18] & 0xFF);
-            Log.i(TAG, "ELF e_machine: 0x" + Integer.toHexString(eMachine));
-            // EM_ARM = 0x28 (32-bit), EM_AARCH64 = 0xB7 (64-bit)
+            boolean elf64 = header[4] == 2;
+            Log.i(TAG, "ELF e_machine: 0x" + Integer.toHexString(eMachine)
+                    + (elf64 ? " (ELF64)" : " (ELF32)"));
+            // EM_ARM = 0x28, EM_AARCH64 = 0xB7
             if (eMachine == 0x28) {
-                Log.w(TAG, "32-bit ARM SO detected, not supported");
-                return false;
+                Log.i(TAG, "32-bit ARM SO: static analysis mode");
+                return true;
             }
             if (eMachine != 0xB7 && eMachine != 0x3E) {
                 Log.w(TAG, "Unknown architecture: 0x" + Integer.toHexString(eMachine));

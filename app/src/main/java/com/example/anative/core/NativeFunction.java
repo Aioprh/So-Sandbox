@@ -15,6 +15,8 @@ public class NativeFunction implements Serializable {
     private List<ParamInfo> params;        // 参数列表
     private String demangledName;          // demangle后的名字
     private boolean isJni;                 // 是否JNI函数
+    /** ARM32 专用：该函数是 Thumb 代码（st_value 最低位为 1） */
+    private boolean thumb;
 
     public static class ParamInfo implements Serializable {
         public String type;  // int, long, float, double, string
@@ -203,6 +205,8 @@ public class NativeFunction implements Serializable {
     public long getOffset() { return offset; }
     public long getSize() { return size; }
     public void setSize(long size) { this.size = size; }
+    public boolean isThumb() { return thumb; }
+    public void setThumb(boolean thumb) { this.thumb = thumb; }
     public String getSource() { return source; }
     public String getReturnType() { return returnType; }
     public List<ParamInfo> getParams() { return params; }

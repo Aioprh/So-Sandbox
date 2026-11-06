@@ -26,6 +26,7 @@ import com.google.android.material.button.MaterialButton;
 
 import com.example.anative.R;
 import com.example.anative.core.DataHolder;
+import com.example.anative.core.DisasmBridge;
 import com.example.anative.core.ElfParser;
 import com.example.anative.core.NativeFunction;
 import com.example.anative.core.NativeInvoker;
@@ -240,7 +241,7 @@ public class CodeViewActivity extends AppCompatActivity {
             raf.seek(fileOffset);
             raf.readFully(bytes);
             raf.close();
-            return NativeInvoker.disassembleBytes(bytes, virtualAddr, size, stringTable, pltTable, funcTable);
+            return DisasmBridge.disassembleStatic(soPath, bytes, virtualAddr, size, false, stringTable, pltTable, funcTable);
         } catch (Exception e) {
             return "ERR: 读取SO文件失败: " + e.getMessage();
         }

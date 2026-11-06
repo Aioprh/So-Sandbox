@@ -2841,3 +2841,156 @@ Java_com_example_anative_core_NativeInvoker_patchInstruction(JNIEnv *env, jclass
     LOGI("patchInstruction: successfully wrote %zu bytes at offset 0x%llx", written, (unsigned long long)fileOffset);
     return (jint)written;
 }
+
+// ============================================================================
+// JNI入口: disassembleBytesArm32 - ARM32 (A32/T32) 静态反汇编
+// ============================================================================
+//
+// 与 AArch64 通道的区别：
+//   * Capstone 使用 CS_ARCH_ARM，mode 由 thumb 参数决定 CS_MODE_ARM / CS_MODE_THUMB
+//   * 指令长度可变（2/4 字节），输出地址步进依赖 ins->size
+//   * ARM/Thumb 的 PC 语义不同（ARM: 当前+8；Thumb: 当前+4 对齐），
+//     因此 ldr rX, [pc, #imm] 指向字面量池的定位要分别处理
+JNIEXPORT jstring JNICALL
+Java_com_example_anative_core_NativeInvoker_disassembleBytesArm32(
+        JNIEnv *env, jclass clazz, jbyteArray jBytes, jlong funcOffset, jlong funcSize,
+        jboolean thumb, jstring jStringTable, jstring jPltTable, jstring jFuncTable) {
+
+    jsize dataLen = (*env)->GetArrayLength(env, jBytes);
+    size_t size = (size_t)funcSize;
+    if (size == 0 || size > (size_t)dataLen) size = (size_t)dataLen;
+    if (size > 65536) size = 65536;
+
+    uint8_t *code = (uint8_t *)malloc(size);
+    if (!code) return (*env)->NewStringUTF(env, "ERR: out of memory");
+    (*env)->GetByteArrayRegion(env, jBytes, 0, (jsize)size, (jbyte *)code);
+
+    const char *str_table = jStringTable ? (*env)->GetStringUTFChars(env, jStringTable, NULL) : NULL;
+    parse_string_table(str_table);
+    if (str_table) (*env)->ReleaseStringUTFChars(env, jStringTable, str_table);
+
+    const char *plt_table = jPltTable ? (*env)->GetStringUTFChars(env, jPltTable, NULL) : NULL;
+    parse_plt_table(plt_table);
+    if (plt_table) (*env)->ReleaseStringUTFChars(env, jPltTable, plt_table);
+
+    const char *func_table = jFuncTable ? (*env)->GetStringUTFChars(env, jFuncTable, NULL) : NULL;
+    parse_func_table(func_table);
+    if (func_table) (*env)->ReleaseStringUTFChars(env, jFuncTable, func_table);
+
+    csh handle;
+    cs_mode mode = thumb ? CS_MODE_THUMB : CS_MODE_ARM;
+    if (cs_open(CS_ARCH_ARM, mode, &handle) != CS_ERR_OK) {
+        free(code);
+        return (*env)->NewStringUTF(env, "ERR: Capstone(ARM) 初始化失败");
+    }
+    cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
+    cs_option(handle, CS_OPT_SKIPDATA, CS_OPT_ON);
+
+    cs_insn *insns = NULL;
+    // 以偏移为基址，Capstone 输出的跳转目标也就是偏移
+    size_t count = cs_disasm(handle, code, size, (uint64_t)funcOffset, 0, &insns);
+
+    size_t buf_size = (count > 0 ? count : size / 2) * 192 + 8192;
+    char *buffer = (char *)calloc(1, buf_size);
+    if (!buffer) {
+        free(code);
+        if (insns) cs_free(insns, count);
+        cs_close(&handle);
+        return (*env)->NewStringUTF(env, "ERR: out of memory");
+    }
+
+    int pos = 0;
+    pos += snprintf(buffer + pos, buf_size - pos,
+                    "; ARM32 Disassembly (Capstone) - 静态分析模式\n"
+                    "; Function Offset: 0x%llx, Size: %zu bytes, ISA: %s\n"
+                    "; Instructions: %zu\n\n",
+                    (unsigned long long)funcOffset, size, thumb ? "Thumb" : "ARM", count);
+
+    if (count == 0) {
+        // 指令集猜错了（ARM/Thumb 混用很常见）——给出原始字节，让调用方换模式重试
+        pos += snprintf(buffer + pos, buf_size - pos, "; 该地址无法按 %s 解码，可能是另一种指令集\n",
+                        thumb ? "Thumb" : "ARM");
+        for (size_t off = 0; off + 2 <= size && pos < (int)buf_size - 128; off += 2) {
+            pos += snprintf(buffer + pos, buf_size - pos,
+                            "%08llx:  .byte   0x%02x, 0x%02x\n",
+                            (unsigned long long)(funcOffset + off), code[off], code[off + 1]);
+        }
+    } else {
+        for (size_t i = 0; i < count && pos < (int)buf_size - 512; i++) {
+            cs_insn *ins = &insns[i];
+            cs_arm *arm = ins->detail ? &ins->detail->arm : NULL;
+
+            const char *plt_comment = NULL;
+            const char *str_comment = NULL;
+
+            if (arm) {
+                // 直接调用 / 跳转
+                if (ins->id == ARM_INS_BL || ins->id == ARM_INS_BLX || ins->id == ARM_INS_B) {
+                    for (int j = 0; j < arm->op_count; j++) {
+                        if (arm->operands[j].type == ARM_OP_IMM) {
+                            uint64_t target = (uint64_t)arm->operands[j].imm;
+                            plt_comment = find_plt_at(target);
+                            if (!plt_comment) {
+                                const char *fn = find_func_at(target);
+                                if (fn) str_comment = fn;
+                            }
+                            break;
+                        }
+                    }
+                }
+                // 字面量池引用：ldr rX, [pc, #imm]
+                if (!str_comment && (ins->id == ARM_INS_LDR || ins->id == ARM_INS_LDRB
+                                     || ins->id == ARM_INS_LDRH)) {
+                    for (int j = 0; j < arm->op_count; j++) {
+                        if (arm->operands[j].type == ARM_OP_MEM
+                            && arm->operands[j].mem.base == ARM_REG_PC) {
+                            int64_t imm = arm->operands[j].mem.disp;
+                            uint64_t pc = ins->address + (thumb ? 4 : 8);
+                            if (thumb) pc &= ~(uint64_t)3;
+                            uint64_t lit = pc + imm;
+                            // 字面量池里存的是地址，按指针宽度再读一层
+                            if (lit >= (uint64_t)funcOffset
+                                && lit + 4 <= (uint64_t)funcOffset + size) {
+                                uint32_t ptr = *(uint32_t *)(code + (lit - funcOffset));
+                                const char *s = find_string_at((uint64_t)ptr);
+                                if (s) str_comment = s;
+                                else {
+                                    const char *fn = find_func_at((uint64_t)ptr);
+                                    if (fn) str_comment = fn;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            char line[384];
+            int line_len = snprintf(line, sizeof(line), "%08llx:  %-8s %s",
+                                    (unsigned long long)ins->address, ins->mnemonic, ins->op_str);
+
+            if (plt_comment) {
+                int pad = 36 - line_len; if (pad < 2) pad = 2;
+                pos += snprintf(buffer + pos, buf_size - pos, "%s%*s; %s@PLT\n",
+                                line, pad, "", plt_comment);
+            } else if (str_comment) {
+                char short_str[72];
+                if (strlen(str_comment) > 56) snprintf(short_str, sizeof(short_str), "%.56s...", str_comment);
+                else snprintf(short_str, sizeof(short_str), "%s", str_comment);
+                int pad = 36 - line_len; if (pad < 2) pad = 2;
+                pos += snprintf(buffer + pos, buf_size - pos, "%s%*s; %s\n",
+                                line, pad, "", short_str);
+            } else {
+                pos += snprintf(buffer + pos, buf_size - pos, "%s\n", line);
+            }
+        }
+    }
+
+    if (insns) cs_free(insns, count);
+    cs_close(&handle);
+    free(code);
+
+    jstring result = (*env)->NewStringUTF(env, buffer);
+    free(buffer);
+    return result;
+}

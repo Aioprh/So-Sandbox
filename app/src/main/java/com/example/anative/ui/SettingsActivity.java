@@ -129,6 +129,7 @@ public class SettingsActivity extends AppCompatActivity {
         cardMcp = findViewById(R.id.card_mcp);
         cardPatch = findViewById(R.id.card_patch);
         tvPatchStatus = findViewById(R.id.tv_patch_status);
+        tvCacheStatus = findViewById(R.id.tv_cache_status);
         tvMcpStatus = findViewById(R.id.tv_mcp_status);
 
 
@@ -148,6 +149,41 @@ public class SettingsActivity extends AppCompatActivity {
                 new Intent(SettingsActivity.this, McpActivity.class)));
         cardPatch.setOnClickListener(v -> startActivity(
                 new Intent(SettingsActivity.this, PatchListActivity.class)));
+        findViewById(R.id.card_analysis_cache).setOnClickListener(v -> showCacheDialog());
+        updateCacheStatus();
+    }
+
+    private TextView tvCacheStatus;
+
+    private void updateCacheStatus() {
+        if (tvCacheStatus == null) return;
+        try {
+            long bytes = com.example.anative.core.AnalysisCache.sizeBytes(this);
+            int count = com.example.anative.core.AnalysisCache.entryCount(this);
+            tvCacheStatus.setText(String.format(java.util.Locale.US,
+                    "%d 个条目，共 %.1f MB，点此管理", count, bytes / 1024.0 / 1024.0));
+        } catch (Exception e) {
+            tvCacheStatus.setText("函数/字符串/PLT 解析结果会缓存，点此清除");
+        }
+    }
+
+    private void showCacheDialog() {
+        long bytes = com.example.anative.core.AnalysisCache.sizeBytes(this);
+        int count = com.example.anative.core.AnalysisCache.entryCount(this);
+        new AlertDialog.Builder(this)
+                .setTitle("分析缓存")
+                .setMessage(String.format(java.util.Locale.US,
+                        "当前 %d 个缓存条目，占用 %.1f MB。\n\n"
+                                + "缓存按「文件路径 + 大小 + 修改时间」失效，"
+                                + "重新导入同名 SO 后会自动重建。",
+                        count, bytes / 1024.0 / 1024.0))
+                .setPositiveButton("清除缓存", (d, w) -> {
+                    com.example.anative.core.AnalysisCache.clear(this);
+                    updateCacheStatus();
+                    Toast.makeText(this, "缓存已清除", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private void updateMcpStatus() {
