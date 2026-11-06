@@ -249,6 +249,67 @@ Hex 页用于查看和修改函数原始字节。
 
 相似度算法对"插入几条指令"很鲁棒，但对"编译器整体换了"会给出偏低的分值——这是刻意保守的选择：宁可漏配，不可错配。
 
+## 10.3 深度分析
+
+这一组面向"想知道库到底在干什么"的场景，都在主界面右上角菜单里。
+
+### C++ 类视图
+
+解析 Itanium ABI 的 RTTI（`_ZTV` / `_ZTI` / `_ZTS`），还原每个类名、基类和虚函数表。
+
+- 虚表槽位的真实值在 PIE 里并不写在文件里，而是由 `.rela.dyn` 的 `RELATIVE` / `ABS64` / `GLOB_DAT` 重定位给出，所以要先建重定位表再读
+- 槽位会翻译成函数名；指向 `Base::~Base()` 这类说明是编译器复用（trivial 析构常见）
+- 基类只对单继承（`__si_class_type_info`）可靠，多继承的 vmi 结构不在解析范围内
+
+前提是库带着 RTTI 编译（`-frtti`，NDK 默认开启）。`-fno-rtti` 或纯 C 库会提示找不到符号。
+
+### 汇编搜索
+
+反汇编全部函数后按行匹配，四种写法：
+
+| 写法 | 含义 | 例子 |
+|---|---|---|
+| `memcpy` | 子串（含 `; memcpy@PLT` 注释） | 找所有调 memcpy 的地方 |
+| `m:bl` | 助记符精确匹配 | 只列 BL 指令 |
+| `/正则/` | 整行正则 | `/ldr\s+x0, \[x1/` |
+| `m/正则/` | 助记符正则 | `m/cb[zn]/` |
+
+几 MB 的库一次扫完要几秒，页面有进度条。
+
+### SO 依赖关系
+
+读 `.dynamic` 段的 `DT_NEEDED` / `SONAME` / `RUNPATH`，配合 `.dynsym` 分出导出函数、导出数据、导入函数。可导出 Graphviz DOT：
+
+```bash
+dot -Tpng deps.dot -o deps.png
+```
+
+### 跨库查重
+
+选两个 SO，按函数体机器码做 bottom-k minhash 指纹比对，找出被共用的那段代码。
+
+- 符号被 strip 也能对上
+- 阈值默认 75%，几乎完全一致（≥95%）的会单独计数
+- **边界**：它比的是机器码，同一份源码换编译器或优化级别后对不上。这是方法本身的限制，不是 bug
+
+### 字符串自动解密
+
+字符串解码页的「扫描当前 SO」按钮。批量对每条可疑串尝试 Base64 / Hex / URL / 单字节 XOR / 反转，用可打印率、词形结构、关键词命中三项打分，只报告明显变好的结果。
+
+打分刻意保守：宁可漏报，也不让几十条误报把线索埋掉。XOR 只爆破单字节 key（256 次），多字节 key 不在范围内。
+
+### 导出符号脚本
+
+主菜单 → 导出符号脚本，三种格式：
+
+| 格式 | 用途 |
+|---|---|
+| IDA `.py` | `File → Script file...`，批量命名函数并写注释 |
+| Ghidra Jython | Script Manager 里运行，`createFunction` + `setName` |
+| C 头文件 | 函数原型 + 导出/导入符号列表 |
+
+标识符会做合法化处理：`ns::Foo::bar` → `ns_Foo_bar`，首字符是数字时加 `f_` 前缀。
+
 ## 11. 修改与保存 so 文件
 
 当前支持以下修改方式：
@@ -359,6 +420,18 @@ AI 伪 C 不内置第三方模型服务，使用前请自行准备兼容接口�
 
 ## 16. 版本更新日志
 
+### v1.10
+
+- C++ 符号还原改用 `__cxa_demangle`：模板参数、cv 限定、重载后缀都能正确显示（`_ZNK7Derived2idEv` → `Derived::id() const`）
+- 新增「C++ 类视图」：解析 RTTI 还原类名、基类与虚函数表，支持 `RELATIVE` / `ABS64` / `GLOB_DAT` 三类重定位
+- 新增「汇编搜索」：子串 / 助记符 / 正则四种查询，回答"哪些函数调了 memcpy"
+- 新增「SO 依赖关系」：`DT_NEEDED`、导出/导入符号，可导出 Graphviz DOT
+- 新增「跨库查重」：bottom-k minhash 函数指纹，跨 SO 找共用代码
+- 字符串解码页新增「扫描当前 SO」：批量尝试 Base64 / Hex / URL / XOR / 反转并按可信度排序
+- 新增「导出符号脚本」：IDA `.py` / Ghidra Jython / C 头文件
+- MCP 新增 6 个工具（`so_rtti`、`so_asm_search`、`so_dependency`、`so_find_clones`、`so_auto_decode`、`so_export_script`），共 27 个
+- 新增 30 个单元测试，覆盖指令级 diff、指纹算法、RTTI 名字解析、脚本生成
+
 ### v1.9
 
 - 新增 ARM32（armeabi-v7a）静态分析：ELF32 节表/程序头/重定位解析、ARM 与 Thumb 双指令集函数发现、Capstone ARM 反汇编通道
@@ -458,7 +531,7 @@ SoSandbox 内置了一个 MCP（Model Context Protocol）服务器，AI 客户�
 3. 复制页面上的连接地址，例如 `http://192.168.1.20:8765/mcp`
 4. 把「客户端配置」里的 JSON 粘贴到 MCP 客户端，手机与电脑需在同一局域网
 
-### 提供的能力（21 个工具）
+### 提供的能力（27 个工具）
 
 | 类别 | 工具 |
 | --- | --- |
@@ -467,6 +540,7 @@ SoSandbox 内置了一个 MCP（Model Context Protocol）服务器，AI 客户�
 | 分析 | `so_disassemble`、`so_decompile`、`so_read_hex`、`so_xrefs`、`so_string_refs`、`so_recognize_function` |
 | 搜索/导出 | `so_search_bytes`、`so_export_report` |
 | 版本/调用图 | `so_compare`、`so_call_graph` |
+| 深度分析 | `so_rtti`、`so_asm_search`、`so_dependency`、`so_find_clones`、`so_auto_decode`、`so_export_script` |
 | 修改 | `so_write_asm`、`so_write_hex`、`so_patch_batch`、`so_diff`、`so_save` |
 
 ### 传输与安全

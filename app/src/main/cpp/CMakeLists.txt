@@ -52,6 +52,7 @@ add_library(
         runtime_tracer.cpp
         native-lib.cpp
         tiny_aes.cpp
+        demangle.cpp
         debugger.cpp)
 
 target_include_directories(so_sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/capstone/include)

@@ -125,6 +125,18 @@
         <activity
             android:name=".ui.CallGraphActivity"
             android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.ClassListActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.AsmSearchActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.DependencyActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.CloneActivity"
+            android:parentActivityName=".ui.MainActivity" />
 
         <!-- MCP 前台服务，保证后台可被客户端访问 -->
         <service

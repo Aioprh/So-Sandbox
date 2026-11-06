@@ -161,6 +161,19 @@ public class NativeInvoker {
                                                       String pltTable, String funcTable);
 
     /**
+     * C++ 符号还原（Itanium ABI，__cxa_demangle）
+     *
+     * @param mangled 形如 _ZN3foo3barEi 的符号名
+     * @return 还原后的名字；无法还原时返回 null，调用方回退到简化解析
+     */
+    public static native String demangleSymbol(String mangled);
+
+    /**
+     * 批量符号还原。还原失败的槽位为 null。
+     */
+    public static native String[] demangleBatch(String[] mangled);
+
+    /**
      * 从byte[]伪C反编译 (静态分析模式)
      * @param bytes 函数机器码字节
      * @param funcOffset 函数在文件中的偏移

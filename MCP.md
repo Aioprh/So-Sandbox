@@ -93,6 +93,12 @@ claude mcp add --transport http so-sandbox http://192.168.1.20:8765/mcp \
 | `so_recognize_function` | 把地址登记为函数（符号被剥离时） | `offset`、`size` |
 | `so_compare` | 两个 SO 的函数级版本对比（新增/删除/变更/相似度） | `old_path`、`new_path`、`format`、`limit` |
 | `so_call_graph` | 以某函数为中心的调用关系图，可导出 DOT / Mermaid | `function` 或 `offset`、`depth`、`direction`、`format` |
+| `so_rtti` | 解析 RTTI，还原类名 / 基类 / 虚函数表 | `filter`、`with_slots`、`limit` |
+| `so_asm_search` | 按模式搜索指令（子串 / 助记符 / 正则） | `query`、`max_hits`、`max_functions` |
+| `so_dependency` | DT_NEEDED、导出/导入符号，可导出 DOT | `path`、`format` |
+| `so_find_clones` | 跨库函数指纹比对，找共用代码 | `paths`、`threshold`、`limit` |
+| `so_auto_decode` | 批量尝试 Base64 / Hex / XOR / 反转 | `max_scan`、`max_findings` |
+| `so_export_script` | 导出 IDA .py / Ghidra / C 头文件 | `format`、`limit` |
 
 要点：
 
@@ -128,7 +134,7 @@ so_save      {}
 ## 5. 协议与实现细节
 
 - JSON-RPC 2.0，支持批量请求；协议版本在 `initialize` 协商（`2025-06-18` / `2025-03-26` / `2024-11-05`）
-- 能力：`tools`（21 个工具）、`logging`；`resources/list`、`prompts/list` 返回空列表
+- 能力：`tools`（27 个工具）、`logging`；`resources/list`、`prompts/list` 返回空列表
 - 传输：
   - `POST /mcp` → Streamable HTTP，单次请求-响应（`Content-Type: application/json`）
   - `GET /sse` + `POST /messages?sessionId=` → 旧版 HTTP+SSE
@@ -141,7 +147,7 @@ so_save      {}
 app/src/main/java/com/example/anative/mcp/
 ├── McpServer.java    # HTTP 服务 + 双传输
 ├── McpProtocol.java  # JSON-RPC 分发、initialize 协商
-├── McpTools.java     # 21 个工具的实现
+├── McpTools.java     # 27 个工具的实现
 ├── McpManager.java   # 生命周期（单例）
 ├── McpService.java   # 前台服务，保证后台可访问
 ├── McpPrefs.java     # 端口/令牌/开关

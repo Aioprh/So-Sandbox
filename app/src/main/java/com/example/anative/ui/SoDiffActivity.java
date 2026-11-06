@@ -215,6 +215,83 @@ public class SoDiffActivity extends AppCompatActivity {
 
     // ------------------------------------------------------------------
 
+    /**
+     * 展开某个函数的指令级差异。
+     *
+     * <p>函数级相似度只能说"变了 40%"，看不出改了什么。这里把两版反汇编
+     * 做 LCS，直接列出增删的指令。
+     */
+    private void showAsmDiff(SoDiff.FunctionChange c) {
+        if (oldPath == null || newPath == null) return;
+        tvSummary.setText("正在反汇编 " + c.name + " ...");
+
+        new Thread(() -> {
+            String oldAsm = disassembleOne(oldPath, c.oldOffset, c.oldSize);
+            String newAsm = disassembleOne(newPath, c.newOffset, c.newSize);
+
+            String text;
+            if (oldAsm == null || newAsm == null) {
+                text = "反汇编失败：函数大小未知，或该偏移读不到有效指令。";
+            } else {
+                com.example.anative.core.AsmDiff.Result r =
+                        com.example.anative.core.AsmDiff.diff(oldAsm, newAsm);
+                StringBuilder sb = new StringBuilder();
+                sb.append(String.format(Locale.US, "指令重合率 %d%%   变动 %d 条\n\n",
+                        r.similarity(), r.changeCount()));
+                sb.append(com.example.anative.core.AsmDiff.renderText(r, 3));
+                if (sb.length() > 6000) {
+                    sb.setLength(6000);
+                    sb.append("\n... （内容过长，已截断）");
+                }
+                text = sb.toString();
+            }
+
+            final String content = text;
+            main.post(() -> {
+                restoreSummary();
+                new androidx.appcompat.app.AlertDialog.Builder(this)
+                        .setTitle(c.name)
+                        .setMessage(content)
+                        .setPositiveButton("关闭", null)
+                        .show();
+            });
+        }).start();
+    }
+
+    private void restoreSummary() {
+        SoDiff.Result r = currentResult();
+        tvSummary.setText(r == null ? "" : summaryText(r));
+    }
+
+    private String disassembleOne(String path, long va, long size) {
+        try {
+            if (size <= 0 || size > 65536) size = Math.min(4096, 65536);
+            long off = com.example.anative.core.ElfParser.virtualAddrToFileOffset(path, va);
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(path, "r")) {
+                if (off < 0 || off + 4 > raf.length()) return null;
+                if (off + size > raf.length()) size = raf.length() - off;
+                if (size <= 0) return null;
+                byte[] bytes = new byte[(int) size];
+                raf.seek(off);
+                raf.readFully(bytes);
+                return com.example.anative.core.DisasmBridge.disassembleStatic(
+                        path, bytes, va, size, false, "", "", "");
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private SoDiff.Result currentResult() {
+        return result;
+    }
+
+    private String summaryText(SoDiff.Result r) {
+        return String.format(Locale.US,
+                "变更 %d   新增 %d   删除 %d   未变 %d   整体相似度 %d%%",
+                r.changed.size(), r.added.size(), r.removed.size(), r.same.size(), r.overallSimilarity());
+    }
+
     private class Adapter extends RecyclerView.Adapter<Adapter.VH> {
 
         class VH extends RecyclerView.ViewHolder {
@@ -260,9 +337,15 @@ public class SoDiffActivity extends AppCompatActivity {
                     h.badge.setTextColor(c.similarity < 80
                             ? getColor(R.color.orange_accent) : getColor(R.color.text_secondary));
                     h.detail.setText(String.format(Locale.US,
-                            "%d → %d 字节 (%+d)   相似度 %d%%",
+                            "%d → %d 字节 (%+d)   相似度 %d%%\n点击查看指令级差异",
                             c.oldSize, c.newSize, c.deltaSize(), c.similarity));
                     break;
+            }
+
+            if (SoDiff.KIND_CHANGED.equals(c.kind)) {
+                h.itemView.setOnClickListener(v -> showAsmDiff(c));
+            } else {
+                h.itemView.setOnClickListener(null);
             }
         }
 

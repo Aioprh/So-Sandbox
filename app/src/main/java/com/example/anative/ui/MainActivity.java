@@ -646,6 +646,71 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
+    /**
+     * 把当前函数表导出成 PC 端工具能直接跑的脚本。
+     *
+     * <p>手机上看完再去 IDA 里一个个重命名太浪费，这里直接把符号和注释写进去。
+     */
+    private void showExportScriptDialog() {
+        List<com.example.anative.core.NativeFunction> functions =
+                DataHolder.getInstance().getFunctions();
+        if (functions == null || functions.isEmpty()) {
+            Toast.makeText(this, "尚未加载 SO 文件", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String[] formats = {
+                "IDA .py（批量命名 + 注释）",
+                "Ghidra Jython 脚本",
+                "C 头文件（函数原型）"
+        };
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("导出符号脚本（" + functions.size() + " 个函数）")
+                .setItems(formats, (d, which) -> exportScript(functions, which))
+                .show();
+    }
+
+    private void exportScript(List<com.example.anative.core.NativeFunction> functions, int which) {
+        String soPath = DataHolder.getInstance().getSoPath();
+        String moduleName = soPath == null ? "unknown" : new java.io.File(soPath).getName();
+
+        String content;
+        String ext;
+        String prefix;
+        if (which == 0) {
+            content = com.example.anative.core.Exporters.idaPython(moduleName, functions, 5000);
+            ext = "py";
+            prefix = "ida_symbols_";
+        } else if (which == 1) {
+            content = com.example.anative.core.Exporters.ghidraScript(moduleName, functions, 5000);
+            ext = "py";
+            prefix = "ghidra_symbols_";
+        } else {
+            content = com.example.anative.core.Exporters.cHeader(moduleName, functions, null, null);
+            ext = "h";
+            prefix = "symbols_";
+        }
+
+        try {
+            java.io.File dir = new java.io.File(
+                    android.os.Environment.getExternalStorageDirectory(), "SoSandbox");
+            if (!dir.exists() && !dir.mkdirs()) {
+                Toast.makeText(this, "无法创建目录", Toast.LENGTH_LONG).show();
+                return;
+            }
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+                    .format(new java.util.Date());
+            java.io.File out = new java.io.File(dir, prefix + stamp + "." + ext);
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                fos.write(content.getBytes("UTF-8"));
+            }
+            Toast.makeText(this, "已导出：" + out.getAbsolutePath(), Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "导出失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         if (item.getItemId() == R.id.action_settings) {
@@ -663,6 +728,21 @@ public class MainActivity extends AppCompatActivity {
             return true;
         } else if (item.getItemId() == R.id.action_so_diff) {
             startActivity(new Intent(this, SoDiffActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_asm_search) {
+            startActivity(new Intent(this, AsmSearchActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_class_list) {
+            startActivity(new Intent(this, ClassListActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_dependency) {
+            startActivity(new Intent(this, DependencyActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_clone) {
+            startActivity(new Intent(this, CloneActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_export_script) {
+            showExportScriptDialog();
             return true;
         } else if (item.getItemId() == R.id.action_view_crash_log) {
             if (CrashHandler.hasCrashLog(this)) {

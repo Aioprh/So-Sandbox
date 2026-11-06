@@ -48,11 +48,41 @@ public class StringDecoderActivity extends AppCompatActivity {
         MaterialButton btnXor = findViewById(R.id.btn_xor);
         MaterialButton btnRc4 = findViewById(R.id.btn_rc4);
         MaterialButton btnCopy = findViewById(R.id.btn_copy);
+        MaterialButton btnScanSo = findViewById(R.id.btn_scan_so);
 
         btnAuto.setOnClickListener(v -> runAuto());
         btnXor.setOnClickListener(v -> runXor());
         btnRc4.setOnClickListener(v -> runRc4());
         btnCopy.setOnClickListener(v -> copyOutput());
+        btnScanSo.setOnClickListener(v -> scanCurrentSo());
+    }
+
+    /**
+     * 扫描当前 SO 的字符串表，批量尝试 Base64 / Hex / XOR / 反转，
+     * 只把「明显变好」的结果报出来。
+     */
+    private void scanCurrentSo() {
+        String soPath = com.example.anative.core.DataHolder.getInstance().getSoPath();
+        java.util.List<com.example.anative.core.ElfParser.StringEntry> strings =
+                com.example.anative.core.DataHolder.getInstance().getStrings();
+
+        if (soPath == null) {
+            Toast.makeText(this, "尚未加载 SO 文件", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (strings == null || strings.isEmpty()) {
+            Toast.makeText(this, "字符串表还没加载，请先在主界面打开字符串列表",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        tvOutput.setText("正在扫描 " + strings.size() + " 条字符串...");
+        new Thread(() -> {
+            java.util.List<com.example.anative.core.StringAutoDecoder.Finding> findings =
+                    com.example.anative.core.StringAutoDecoder.scan(strings, 20000, 80);
+            String text = com.example.anative.core.StringAutoDecoder.format(findings);
+            runOnUiThread(() -> tvOutput.setText(text));
+        }).start();
     }
 
     private String input() {

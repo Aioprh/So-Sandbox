@@ -3,8 +3,15 @@ package com.example.anative.mcp;
 import android.content.Context;
 import android.os.Environment;
 
+import com.example.anative.core.AsmSearch;
 import com.example.anative.core.CallGraph;
+import com.example.anative.core.CppRtti;
 import com.example.anative.core.DataHolder;
+import com.example.anative.core.DisasmTables;
+import com.example.anative.core.Exporters;
+import com.example.anative.core.FunctionFingerprint;
+import com.example.anative.core.SoDependency;
+import com.example.anative.core.StringAutoDecoder;
 import com.example.anative.core.DisasmBridge;
 import com.example.anative.core.ElfArch;
 import com.example.anative.core.ElfParser;
@@ -38,7 +45,7 @@ import java.util.Map;
 public class McpTools {
 
     public static final String SERVER_NAME = "so-sandbox";
-    public static final String SERVER_VERSION = "1.8.0";
+    public static final String SERVER_VERSION = "1.10.0";
 
     private static final int MAX_TEXT_OUTPUT = 120000;
     private static final int MAX_TABLE_STRINGS = 40000;
@@ -216,6 +223,51 @@ public class McpTools {
                         "max_nodes", prop("integer", "节点上限，默认 200")
                 )));
 
+        tools.put(tool("so_rtti", "C++ 类视图",
+                "解析 RTTI（_ZTV / _ZTI / _ZTS），还原类名、基类与虚函数表槽位。对 C++ 写的库特别有用。",
+                schema(
+                        "filter", prop("string", "按类名过滤（子串，不区分大小写）"),
+                        "with_slots", prop("boolean", "是否列出每个类的虚函数槽，默认 true"),
+                        "limit", prop("integer", "最多返回多少个类，默认 50")
+                )));
+
+        tools.put(tool("so_asm_search", "汇编模式搜索",
+                "在反汇编结果里按模式查找指令，回答「哪些函数调了 memcpy」这类问题。写法：memcpy（子串）/ m:bl（助记符）/ /正则/（整行）/ m/正则/（助记符正则）。",
+                schema(
+                        "query", prop("string", "查询表达式"),
+                        "max_hits", prop("integer", "命中上限，默认 200"),
+                        "max_functions", prop("integer", "最多扫描多少个函数，默认 3000")
+                ).put("required", new JSONArray().put("query"))));
+
+        tools.put(tool("so_dependency", "SO 依赖关系",
+                "读取 DT_NEEDED / SONAME / RUNPATH，并列出导出与导入符号，可导出 Graphviz DOT。",
+                schema(
+                        "path", prop("string", "SO 路径，默认使用当前已打开的 SO"),
+                        "format", enumProp(new String[]{"text", "dot"}, "输出格式，默认 text")
+                )));
+
+        tools.put(tool("so_find_clones", "跨库查重",
+                "按函数体机器码做指纹比对，找出当前 SO 与其他库共用的函数（识别公共 SDK / 抄来的代码）。",
+                schema(
+                        "paths", prop("string", "对比库的绝对路径，多个用英文逗号分隔"),
+                        "threshold", prop("number", "相似度阈值 0-1，默认 0.75"),
+                        "limit", prop("integer", "最多返回多少对，默认 100")
+                ).put("required", new JSONArray().put("paths"))));
+
+        tools.put(tool("so_auto_decode", "字符串自动解密",
+                "批量扫描字符串表，自动尝试 Base64 / Hex / URL / 单字节 XOR / 反转，只报告明显变好的结果。",
+                schema(
+                        "max_scan", prop("integer", "最多分析多少条字符串，默认 20000"),
+                        "max_findings", prop("integer", "最多返回多少条结果，默认 60")
+                )));
+
+        tools.put(tool("so_export_script", "导出符号脚本",
+                "把函数表导出成 IDA .py / Ghidra Jython / C 头文件，直接带回 PC 端使用。",
+                schema(
+                        "format", enumProp(new String[]{"ida", "ghidra", "cheader"}, "目标格式，默认 ida"),
+                        "limit", prop("integer", "最多导出多少个函数，默认 5000")
+                )));
+
         return tools;
     }
 
@@ -270,6 +322,18 @@ public class McpTools {
                     return text(compare(arguments));
                 case "so_call_graph":
                     return text(callGraph(arguments));
+                case "so_rtti":
+                    return text(rtti(arguments));
+                case "so_asm_search":
+                    return text(asmSearch(arguments));
+                case "so_dependency":
+                    return text(dependency(arguments));
+                case "so_find_clones":
+                    return text(findClones(arguments));
+                case "so_auto_decode":
+                    return text(autoDecode(arguments));
+                case "so_export_script":
+                    return text(exportScript(arguments));
                 default:
                     return error("未知工具: " + name);
             }
@@ -1641,6 +1705,183 @@ public class McpTools {
         if (list.size() > n) {
             sb.append("  ... 省略 ").append(list.size() - n).append(" 条\n");
         }
+    }
+
+    private String rtti(JSONObject args) throws Exception {
+        List<NativeFunction> functions = DataHolder.getInstance().getFunctions();
+        if (functions == null) functions = new java.util.ArrayList<>();
+
+        CppRtti.Result result = CppRtti.scan(requirePath(), functions);
+        String filter = args.optString("filter", "").toLowerCase(Locale.US);
+        boolean withSlots = args.optBoolean("with_slots", true);
+        int limit = clamp(args.optInt("limit", 50), 1, 500);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(CppRtti.summary(result)).append("\n\n");
+        if (result.classes.isEmpty()) {
+            if (result.note != null) sb.append(result.note).append('\n');
+            return sb.toString();
+        }
+
+        int shown = 0;
+        for (CppRtti.RttiClass cls : result.classes) {
+            if (shown >= limit) {
+                sb.append("... 还有 ").append(result.classes.size() - shown).append(" 个类未列出\n");
+                break;
+            }
+            String name = cls.className == null ? cls.code : cls.className;
+            if (!filter.isEmpty() && !name.toLowerCase(Locale.US).contains(filter)) continue;
+
+            sb.append("◆ ").append(name)
+                    .append("   (").append(cls.slots.size()).append(" 个虚函数)");
+            if (cls.baseClass != null && !cls.baseClass.isEmpty()) {
+                sb.append("  : ").append(cls.baseClass);
+            }
+            sb.append(String.format(Locale.US, "   vtable@0x%X\n", cls.vtableVa));
+
+            if (withSlots) {
+                for (CppRtti.VirtualFunction vf : cls.slots) {
+                    sb.append(String.format(Locale.US, "   [%2d] %s\n", vf.index, vf.display()));
+                }
+            }
+            shown++;
+        }
+        return sb.toString();
+    }
+
+    private String asmSearch(JSONObject args) throws Exception {
+        String query = args.optString("query", "").trim();
+        if (query.isEmpty()) throw new ToolException("query 不能为空");
+
+        DataHolder holder = DataHolder.getInstance();
+        List<NativeFunction> functions = holder.getFunctions();
+        if (functions == null || functions.isEmpty()) {
+            throw new ToolException("尚未打开 SO，请先调用 so_open");
+        }
+
+        int maxHits = clamp(args.optInt("max_hits", 200), 1, 2000);
+        int maxFunctions = clamp(args.optInt("max_functions", 3000), 1, 20000);
+
+        List<AsmSearch.Hit> hits = AsmSearch.search(
+                requirePath(), functions, query,
+                DisasmTables.funcTable(functions),
+                DisasmTables.pltTable(holder.getPltEntries()),
+                DisasmTables.stringTable(holder.getStrings()),
+                maxHits, maxFunctions, null, null);
+
+        return AsmSearch.format(hits);
+    }
+
+    private String dependency(JSONObject args) throws Exception {
+        String path = args.optString("path", "").trim();
+        if (path.isEmpty()) path = requirePath();
+
+        SoDependency.Info info = SoDependency.parse(path);
+        if ("dot".equalsIgnoreCase(args.optString("format", "text"))) {
+            return SoDependency.toDot(info);
+        }
+        return SoDependency.format(info);
+    }
+
+    private String findClones(JSONObject args) throws Exception {
+        String raw = args.optString("paths", "").trim();
+        if (raw.isEmpty()) throw new ToolException("paths 不能为空，多个路径用英文逗号分隔");
+
+        DataHolder holder = DataHolder.getInstance();
+        List<NativeFunction> functions = holder.getFunctions();
+        if (functions == null || functions.isEmpty()) {
+            throw new ToolException("尚未打开 SO，请先调用 so_open");
+        }
+
+        double threshold = args.optDouble("threshold", 0.75);
+        if (threshold <= 0 || threshold > 1) threshold = 0.75;
+        int limit = clamp(args.optInt("limit", 100), 1, 2000);
+
+        List<FunctionFingerprint.Entry> left =
+                FunctionFingerprint.build(requirePath(), functions);
+        if (left.isEmpty()) throw new ToolException("当前 SO 没有可建指纹的函数");
+
+        List<FunctionFingerprint.Entry> right = new java.util.ArrayList<>();
+        StringBuilder skipped = new StringBuilder();
+        for (String piece : raw.split(",")) {
+            String p = piece.trim();
+            if (p.isEmpty()) continue;
+            try {
+                List<NativeFunction> targetFunctions = ElfParser.parseFunctions(p, "balanced");
+                right.addAll(FunctionFingerprint.build(p, targetFunctions));
+            } catch (Exception e) {
+                skipped.append("跳过 ").append(p).append(": ").append(e.getMessage()).append('\n');
+            }
+        }
+        if (right.isEmpty()) {
+            throw new ToolException("对比库都没有解析成功\n" + skipped);
+        }
+
+        List<FunctionFingerprint.Match> matches =
+                FunctionFingerprint.compare(left, right, threshold, limit);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("对比基数: 当前库 ").append(left.size())
+                .append(" 个函数 / 目标库 ").append(right.size()).append(" 个函数\n\n");
+        sb.append(FunctionFingerprint.format(matches));
+        if (skipped.length() > 0) sb.append('\n').append(skipped);
+        return sb.toString();
+    }
+
+    private String autoDecode(JSONObject args) throws Exception {
+        int maxScan = clamp(args.optInt("max_scan", 20000), 100, 200000);
+        int maxFindings = clamp(args.optInt("max_findings", 60), 1, 500);
+
+        List<ElfParser.StringEntry> strings = DataHolder.getInstance().getStrings();
+        if (strings == null || strings.isEmpty()) {
+            strings = ElfParser.parseStrings(requirePath());
+            DataHolder.getInstance().setStrings(strings);
+        }
+
+        List<StringAutoDecoder.Finding> findings =
+                StringAutoDecoder.scan(strings, maxScan, maxFindings);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("扫描 ").append(Math.min(strings.size(), maxScan))
+                .append(" 条字符串\n\n");
+        sb.append(StringAutoDecoder.format(findings));
+        return sb.toString();
+    }
+
+    private String exportScript(JSONObject args) throws Exception {
+        List<NativeFunction> functions = DataHolder.getInstance().getFunctions();
+        if (functions == null || functions.isEmpty()) {
+            throw new ToolException("尚未打开 SO，请先调用 so_open");
+        }
+        int limit = clamp(args.optInt("limit", 5000), 1, 50000);
+        String format = args.optString("format", "ida");
+        String module = new File(requirePath()).getName();
+
+        String content;
+        if ("ghidra".equalsIgnoreCase(format)) {
+            content = Exporters.ghidraScript(module, functions, limit);
+        } else if ("cheader".equalsIgnoreCase(format) || "c".equalsIgnoreCase(format)) {
+            content = Exporters.cHeader(module, functions, null, null);
+        } else {
+            content = Exporters.idaPython(module, functions, limit);
+        }
+
+        // 脚本动辄几十万字符，直接塞回 MCP 响应不现实，落盘后返回路径
+        File dir = new File(Environment.getExternalStorageDirectory(), "SoSandbox");
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw new ToolException("无法创建目录 " + dir.getAbsolutePath());
+        }
+        String ext = "cheader".equalsIgnoreCase(format) || "c".equalsIgnoreCase(format) ? "h" : "py";
+        File out = new File(dir, "export_" + System.currentTimeMillis() + "." + ext);
+        try (FileOutputStream fos = new FileOutputStream(out)) {
+            fos.write(content.getBytes("UTF-8"));
+        }
+
+        return "已导出 " + functions.size() + " 个函数（" + format + "）\n"
+                + "文件: " + out.getAbsolutePath() + "\n"
+                + "大小: " + content.length() + " 字符\n\n"
+                + content.substring(0, Math.min(1200, content.length()))
+                + (content.length() > 1200 ? "\n... （后续内容见文件）" : "");
     }
 
     private String callGraph(JSONObject args) throws Exception {

@@ -29,6 +29,31 @@
         app:showAsAction="never" />
 
     <item
+        android:id="@+id/action_asm_search"
+        android:title="汇编搜索"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_class_list"
+        android:title="C++ 类视图"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_dependency"
+        android:title="SO 依赖关系"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_clone"
+        android:title="跨库查重"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_export_script"
+        android:title="导出符号脚本"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_view_crash_log"
         android:title="查看最近崩溃日志"
         app:showAsAction="never" />

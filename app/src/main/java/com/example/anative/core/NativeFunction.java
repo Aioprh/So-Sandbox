@@ -3,6 +3,7 @@ package com.example.anative.core;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class NativeFunction implements Serializable {
     private String name;
@@ -88,6 +89,12 @@ public class NativeFunction implements Serializable {
 
     // 简单C++ demangle (提取函数名部分)
     private String demangleCpp(String mangled) {
+        // 优先交给 __cxa_demangle。手写解析遇到模板参数(_ZN3fooIiEEvT_)、
+        // cv 限定、重载后缀就无能为力了，而这些在真实 C++ 库里是常态。
+        String real = demangleViaNative(mangled);
+        if (real != null && !real.isEmpty()) {
+            return real;
+        }
         try {
             // _Z[N]<len><name>... 格式
             int idx = 2;
@@ -119,6 +126,31 @@ public class NativeFunction implements Serializable {
             return mangled;
         }
     }
+
+    /** 调用原生 __cxa_demangle，带进程内缓存。无 native 环境（单测）返回 null。 */
+    private static String demangleViaNative(String mangled) {
+        String cached = DEMANGLE_CACHE.get(mangled);
+        if (cached != null) {
+            return cached.isEmpty() ? null : cached;
+        }
+        String result = null;
+        try {
+            result = NativeInvoker.demangleSymbol(mangled);
+        } catch (Throwable ignored) {
+            // 单元测试或 native 库未加载，回退到简化解析
+        }
+        DEMANGLE_CACHE.put(mangled, result == null ? "" : result);
+        return result;
+    }
+
+    private static final Map<String, String> DEMANGLE_CACHE =
+            java.util.Collections.synchronizedMap(
+            new java.util.LinkedHashMap<String, String>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                    return size() > 8192;
+                }
+            });
 
     // 常见C函数签名推断
     private void inferCommonCFunction() {

@@ -1676,6 +1676,73 @@ public class ElfParser {
         }
     }
 
+    /** 符号表条目（函数、对象、类型信息符号等），供 RTTI / 依赖分析使用 */
+    public static class SymbolInfo {
+        public final String name;
+        public final long value;
+        public final long size;
+        public final int type;
+        public final String source;
+        /** 所属节索引；0 表示未定义（导入符号） */
+        public final int shndx;
+        /** 绑定属性：0=LOCAL 1=GLOBAL 2=WEAK */
+        public final int binding;
+
+        public SymbolInfo(String name, long value, long size, int type, String source) {
+            this(name, value, size, type, source, 1, 1);
+        }
+
+        public SymbolInfo(String name, long value, long size, int type, String source,
+                          int shndx, int binding) {
+            this.name = name;
+            this.value = value;
+            this.size = size;
+            this.type = type;
+            this.source = source;
+            this.shndx = shndx;
+            this.binding = binding;
+        }
+
+        public boolean isUndefined() {
+            return shndx == 0;
+        }
+    }
+
+    /**
+     * 解析所有符号（不限于 STT_FUNC）。
+     *
+     * <p>RTTI 还原要用 STT_OBJECT 的 _ZTV/_ZTI/_ZTS，依赖图要用未定义符号，
+     * 因此这里不做类型过滤，把 symtab 与 dynsym 的内容原样交出去。
+     */
+    public static List<SymbolInfo> parseSymbols(String soPath) throws IOException {
+        List<SymbolInfo> out = new ArrayList<>();
+        ElfFile elfFile = safeOpenElf(soPath);
+
+        for (int i = 0; i < elfFile.e_shnum; i++) {
+            ElfSection section = elfFile.getSection(i);
+            if (section == null) continue;
+            ElfSectionHeader header = section.header;
+            if (header == null) continue;
+            if (header.sh_type != ElfSectionHeader.SHT_SYMTAB
+                    && header.sh_type != ElfSectionHeader.SHT_DYNSYM) {
+                continue;
+            }
+
+            String source = (header.sh_type == ElfSectionHeader.SHT_DYNSYM) ? "dynsym" : "symtab";
+            ElfSymbolTableSection symSection = (ElfSymbolTableSection) section;
+            if (symSection.symbols == null) continue;
+
+            for (ElfSymbol sym : symSection.symbols) {
+                if (sym == null) continue;
+                String name = sym.getName();
+                if (name == null || name.isEmpty()) continue;
+                out.add(new SymbolInfo(name, sym.st_value, sym.st_size, sym.getType(), source,
+                        sym.st_shndx, sym.getBinding()));
+            }
+        }
+        return out;
+    }
+
     /**
      * 解析SO文件的所有段(Section)信息
      */
