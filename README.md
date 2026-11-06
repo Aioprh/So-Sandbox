@@ -25,6 +25,7 @@ SoSandbox 用于对 Android Native so 文件进行查看、分析与修改。
 - 交叉引用分析
 - 保存修改后的 so 文件
 - AI 伪 C 配置与调用（支持 OpenAI / Gemini / 自定义接口）
+- 内置 MCP 服务：把 SO 分析能力通过 MCP 协议开放给 AI 客户端（详见 [MCP.md](MCP.md)）
 - 检测更新
 - 卡密激活赞助功能
 
@@ -372,6 +373,44 @@ AI 伪 C 不内置第三方模型服务，使用前请自行准备兼容接口�
 
 • 修复部分手机选择文件时找不到 SO 文件的问题
 
-## 17. 结语
+### v1.6
+
+• 新增内置 MCP 服务：AI 客户端可远程打开/分析/修改 SO（Streamable HTTP + SSE 双传输）
+
+• 新增 15 个 MCP 工具，覆盖函数、字符串、PLT、交叉引用、反汇编、伪 C、Hex 读写与保存
+
+• 设置页新增 MCP 入口，可配置端口、访问令牌，查看连接地址、客户端配置与运行日志
+
+• MCP 服务以前台服务运行，App 退到后台仍可被访问
+
+## 17. MCP 服务（AI 客户端接入）
+
+SoSandbox 内置了一个 MCP（Model Context Protocol）服务器，AI 客户端（Claude Desktop、Cursor、Cherry Studio、Claude Code 等）可以直接调用 App 的 SO 分析能力：打开文件、列函数、反汇编、伪 C、查字符串/PLT/交叉引用、改指令并另存。
+
+### 开启方式
+
+1. 设置 → **MCP 服务**
+2. 打开「启用 MCP 服务」开关
+3. 复制页面上的连接地址，例如 `http://192.168.1.20:8765/mcp`
+4. 把「客户端配置」里的 JSON 粘贴到 MCP 客户端，手机与电脑需在同一局域网
+
+### 提供的能力（15 个工具）
+
+| 类别 | 工具 |
+| --- | --- |
+| 打开/状态 | `so_open`、`so_status` |
+| 结构浏览 | `so_list_functions`、`so_search_strings`、`so_list_plt`、`so_list_sections` |
+| 分析 | `so_disassemble`、`so_decompile`、`so_read_hex`、`so_xrefs`、`so_string_refs`、`so_recognize_function` |
+| 修改 | `so_write_asm`、`so_write_hex`、`so_save` |
+
+### 传输与安全
+
+- 同时支持 Streamable HTTP（`POST /mcp`）与旧版 HTTP+SSE（`GET /sse`）
+- 默认开启 Bearer 令牌校验，令牌可在设置页查看、重置或关闭
+- 只监听局域网，所有修改写入 App 私有工作副本，原始 SO 不会被改动
+
+完整说明、客户端配置示例与工具参数见 [MCP.md](MCP.md)。
+
+## 18. 结语
 
 本说明仅保留当前版本已经实现并可实际使用的功能。

@@ -84,6 +84,8 @@ public class SettingsActivity extends AppCompatActivity {
     private CardView cardQqGroup;
     private CardView cardCheckUpdate;
     private CardView cardAbout;
+    private CardView cardMcp;
+    private TextView tvMcpStatus;
     private CardView cardSponsor;
     private TextView tvSponsorStatus;
     private TextView tvPseudoCPromptPreview;
@@ -138,6 +140,8 @@ public class SettingsActivity extends AppCompatActivity {
         cardQqGroup = findViewById(R.id.card_qq_group);
         cardCheckUpdate = findViewById(R.id.card_check_update);
         cardAbout = findViewById(R.id.card_about);
+        cardMcp = findViewById(R.id.card_mcp);
+        tvMcpStatus = findViewById(R.id.tv_mcp_status);
 
         cardSponsor = findViewById(R.id.card_sponsor);
         tvSponsorStatus = findViewById(R.id.tv_sponsor_status);
@@ -148,6 +152,7 @@ public class SettingsActivity extends AppCompatActivity {
         updateAboutSummary();
         updateSponsorStatus();
         updateFunctionDiscoveryModeSummary();
+        updateMcpStatus();
 
         cardAiSettings.setOnClickListener(v -> showAiSettingsDialog());
         cardCodeFontSize.setOnClickListener(v -> showCodeFontSizeDialog());
@@ -155,7 +160,28 @@ public class SettingsActivity extends AppCompatActivity {
         cardQqGroup.setOnClickListener(v -> showQqGroupDialog());
         cardCheckUpdate.setOnClickListener(v -> showCheckUpdateDialog());
         cardAbout.setOnClickListener(v -> showAboutDialog());
+        cardMcp.setOnClickListener(v -> startActivity(
+                new Intent(SettingsActivity.this, McpActivity.class)));
         cardSponsor.setOnClickListener(v -> showSponsorDialog());
+    }
+
+    private void updateMcpStatus() {
+        if (tvMcpStatus == null) {
+            return;
+        }
+        if (com.example.anative.mcp.McpManager.isRunning()) {
+            int port = com.example.anative.mcp.McpManager.getPort();
+            tvMcpStatus.setText("运行中 · " + com.example.anative.mcp.McpPrefs.localIpAddress()
+                    + ":" + port + " · " + com.example.anative.mcp.McpManager.getToolCount() + " 个工具");
+        } else {
+            tvMcpStatus.setText("未启动（点击开启）");
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        updateMcpStatus();
     }
 
     private void updateAiStatus() {

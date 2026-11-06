@@ -184,11 +184,30 @@ public class MainActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
+        // 若上次开启了 MCP 服务，启动时自动恢复
+        restoreMcpServiceIfNeeded();
+
         // 处理从其他应用打开的文件
         handleIncomingFile();
 
         // 启动时检测更新
         checkForUpdateOnStart();
+    }
+
+    /**
+     * 上次启用了 MCP 服务时，应用启动后自动恢复（前台服务被系统回收的场景）。
+     */
+    private void restoreMcpServiceIfNeeded() {
+        try {
+            if (com.example.anative.mcp.McpPrefs.isEnabled(this)
+                    && !com.example.anative.mcp.McpManager.isRunning()) {
+                Intent intent = new Intent(this, com.example.anative.mcp.McpService.class);
+                intent.setAction(com.example.anative.mcp.McpService.ACTION_START);
+                androidx.core.content.ContextCompat.startForegroundService(this, intent);
+            }
+        } catch (Exception e) {
+            Log.w("MainActivity", "恢复 MCP 服务失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -704,13 +723,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private static final String CHANGELOG_VERSION = "1.5";
+    private static final String CHANGELOG_VERSION = "1.6";
     private static final String CHANGELOG_TEXT =
-            "• 项目已完全离线开源，移除所有云端依赖\n" +
-            "• 动态注册 Hook 改为本地执行，不再需要云端服务器\n" +
-            "• 设置页更新公告改为本地展示\n" +
-            "• 代码已开源至 GitHub\n" +
-            "• 后续更新随缘";
+            "• 新增内置 MCP 服务，AI 客户端可远程调用 SO 分析能力\n" +
+            "• 新增 15 个 MCP 工具：函数/字符串/PLT/交叉引用/反汇编/伪C/Hex 读写\n" +
+            "• 设置页新增 MCP 入口，可配置端口、令牌并查看运行日志\n" +
+            "• MCP 以前台服务运行，App 退到后台仍可访问";
 
     private void showChangelogIfNeeded() {
         SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
