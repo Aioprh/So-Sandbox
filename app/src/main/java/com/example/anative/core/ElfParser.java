@@ -48,35 +48,42 @@ public class ElfParser {
     private static ElfFile openElfWithFixedShnum(String soPath) throws IOException {
         RandomAccessFile raf = new RandomAccessFile(soPath, "r");
 
-        // 读取 ELF header 前 64 bytes (ELF64)
+        // 读取 ELF header 前 64 bytes（ELF32 只用到前 52 字节，多读不影响）
         byte[] ehdr = new byte[64];
-        raf.readFully(ehdr);
-
-        // 确认是 ELF64 (e_ident[4] = 2)
-        boolean is64 = ehdr[4] == 2;
-        if (!is64) {
+        int hdrRead = raf.read(ehdr);
+        if (hdrRead < 52) {
             raf.close();
-            throw new IOException("仅支持64位ELF文件");
+            throw new IOException("ELF header 不完整");
         }
 
-        // 读取 e_shoff (section header table offset), 位于偏移 40, 8 bytes
-        long shoff = readLong64(ehdr, 40);
-        // e_shentsize 位于偏移 58, 2 bytes
-        int shentsize = (ehdr[58] & 0xFF) | ((ehdr[59] & 0xFF) << 8);
-        // e_shnum 位于偏移 60, 2 bytes (此时为0)
-        // e_shstrndx 位于偏移 62, 2 bytes
+        // e_ident[4]: 1 = ELF32, 2 = ELF64
+        boolean is64 = ehdr[4] == 2;
+
+        // e_shoff / e_shentsize 在 32 位与 64 位头中的位置不同
+        long shoff = is64 ? readLong64(ehdr, 40) : readInt32(ehdr, 32) & 0xFFFFFFFFL;
+        int shentsize = is64 ? ((ehdr[58] & 0xFF) | ((ehdr[59] & 0xFF) << 8))
+                : ((ehdr[46] & 0xFF) | ((ehdr[47] & 0xFF) << 8));
+        // e_shnum 位于偏移 60(64) / 48(32)，此时为 0
+        // e_shstrndx 位于偏移 62(64) / 50(32)
 
         if (shoff == 0 || shentsize == 0) {
             raf.close();
             throw new IOException("无Section Header Table");
         }
 
-        // 读取 section header[0] 的 sh_size 字段获取真实 section 数量
-        // sh_size 在 Elf64_Shdr 的偏移 32, 8 bytes
-        raf.seek(shoff + 32);
-        byte[] sizeBytes = new byte[8];
-        raf.readFully(sizeBytes);
-        long realShnum = readLong64(sizeBytes, 0);
+        // sh_size 在 Elf64_Shdr 偏移 32（8 字节）、Elf32_Shdr 偏移 20（4 字节）
+        long realShnum;
+        if (is64) {
+            raf.seek(shoff + 32);
+            byte[] sizeBytes = new byte[8];
+            raf.readFully(sizeBytes);
+            realShnum = readLong64(sizeBytes, 0);
+        } else {
+            raf.seek(shoff + 20);
+            byte[] sizeBytes = new byte[4];
+            raf.readFully(sizeBytes);
+            realShnum = readInt32(sizeBytes, 0) & 0xFFFFFFFFL;
+        }
         raf.close();
 
         if (realShnum <= 0 || realShnum > 65535) {
@@ -98,9 +105,9 @@ public class ElfParser {
         src.close();
         fos.close();
 
-        // 修补 e_shnum 字段 (偏移 60, 2 bytes, little-endian)
+        // 修补 e_shnum 字段（64 位偏移 60、32 位偏移 48；2 bytes, little-endian）
         RandomAccessFile fixRaf = new RandomAccessFile(fixedFile, "rw");
-        fixRaf.seek(60);
+        fixRaf.seek(is64 ? 60 : 48);
         fixRaf.writeByte((int) (realShnum & 0xFF));
         fixRaf.writeByte((int) ((realShnum >> 8) & 0xFF));
         fixRaf.close();
@@ -126,6 +133,7 @@ public class ElfParser {
                                                             List<NativeFunction> knownFunctions,
                                                             long expectedSize) throws IOException {
         ElfFile elfFile = safeOpenElf(soPath);
+        ElfArch arch = ElfArch.detect(soPath);
         ElfSectionHeader execHdr = null;
         int numSections = elfFile.e_shnum;
         for (int i = 0; i < numSections; i++) {
@@ -183,6 +191,23 @@ public class ElfParser {
                 scanLimit = Math.min(maxScan, 256);
             }
 
+            // ARM32：AArch64 的序言/CFG 逻辑不适用，改用 ARM/Thumb 指令形态估算
+            if (arch.isArm32()) {
+                boolean thumb = DisasmBridge.guessThumb(code);
+                int cap = (int) Math.min(scanLimit, 16384);
+                long size = expectedSize > 0
+                        ? Math.min(expectedSize, cap)
+                        : Arm32Scanner.estimateFunctionSize(code, 0, thumb, cap);
+                if (size < 2) size = 2;
+                if (nextKnownStart > address) {
+                    size = Math.min(size, nextKnownStart - address);
+                }
+                NativeFunction f = new NativeFunction(
+                        String.format("sub_%X", address), address, size, "manual");
+                f.setThumb(thumb);
+                return f;
+            }
+
             long estimatedSize;
             if (expectedSize > 0) {
                 estimatedSize = Math.min(expectedSize, scanLimit);
@@ -231,6 +256,9 @@ public class ElfParser {
 
         Set<NativeFunction> funcSet = new LinkedHashSet<>();
         ElfFile elfFile = safeOpenElf(soPath);
+        ElfArch arch = ElfArch.detect(soPath);
+        boolean arm32 = arch.isArm32();
+        Log.i(TAG, "Architecture: " + arch.describe());
 
         int numSections = elfFile.e_shnum;
         for (int i = 0; i < numSections; i++) {
@@ -252,12 +280,17 @@ public class ElfParser {
                     if (sym.getType() == ElfSymbol.STT_FUNC && sym.st_value != 0) {
                         String name = sym.getName();
                         if (name != null && !name.isEmpty()) {
-                            funcSet.add(new NativeFunction(
-                                name,
-                                sym.st_value,
-                                sym.st_size,
-                                source
-                            ));
+                            // ARM32: STT_FUNC 符号的 st_value 最低位为 1 表示 Thumb 代码，
+                            // 真正的入口地址要清掉这一位
+                            long value = sym.st_value;
+                            boolean thumb = false;
+                            if (arm32 && (value & 1L) != 0) {
+                                value &= ~1L;
+                                thumb = true;
+                            }
+                            NativeFunction nf = new NativeFunction(name, value, sym.st_size, source);
+                            nf.setThumb(thumb);
+                            funcSet.add(nf);
                         }
                     }
                 }
@@ -291,7 +324,8 @@ public class ElfParser {
                 if (sname.equals(".init_array")) initHdr = sec.header;
                 else if (sname.equals(".fini_array")) finiHdr = sec.header;
                 else if (sname.equals(".text")) textHdr = sec.header;
-                else if (sname.equals(".rela.dyn") || sname.equals(".rela.plt"))
+                else if (sname.equals(".rela.dyn") || sname.equals(".rela.plt")
+                        || sname.equals(".rel.dyn") || sname.equals(".rel.plt"))
                     relaSections.add(sec);
             }
 
@@ -303,32 +337,59 @@ public class ElfParser {
             // 优先从重定位表解析 (PIE SO 中 init_array 的真实值在重定位条目里)
             if ((initHdr != null || finiHdr != null) && !relaSections.isEmpty()) {
                 for (ElfSection relaSec : relaSections) {
+                    int shType = relaSec.header.sh_type;
+                    boolean isRela = shType == 4;        // SHT_RELA
+                    boolean isRel = shType == 9;         // SHT_REL
+                    if (!isRela && !isRel) continue;
+
+                    int entrySize = arm32 ? (isRela ? 12 : 8) : (isRela ? 24 : 16);
+                    int relativeType = arm32 ? 23 : 0x403; // R_ARM_RELATIVE / R_AARCH64_RELATIVE
+
                     long relaOff = relaSec.header.sh_offset;
                     long relaSize = relaSec.header.sh_size;
-                    byte[] relaData = new byte[(int) Math.min(relaSize, 2 * 1024 * 1024)];
+                    if (relaSize <= 0 || relaSize > 4 * 1024 * 1024) continue;
+                    byte[] relaData = new byte[(int) relaSize];
                     raf.seek(relaOff);
                     raf.readFully(relaData);
-                    for (int ri = 0; ri + 24 <= relaData.length; ri += 24) {
-                        long rOffset = readLong64(relaData, ri);
-                        long rInfo = readLong64(relaData, ri + 8);
-                        long rAddend = readLong64(relaData, ri + 16);
-                        int rType = (int) (rInfo & 0xFFFFFFFFL);
-                        if (rType != 0x403 || rAddend == 0) continue; // R_AARCH64_RELATIVE
+
+                    for (int ri = 0; ri + entrySize <= relaData.length; ri += entrySize) {
+                        long rOffset, rInfo, rAddend = 0;
+                        if (arm32) {
+                            rOffset = readInt32(relaData, ri) & 0xFFFFFFFFL;
+                            if (isRela) {
+                                rInfo = readInt32(relaData, ri + 4) & 0xFFFFFFFFL;
+                                rAddend = readInt32(relaData, ri + 8) & 0xFFFFFFFFL;
+                            } else {
+                                // Elf32_Rel: r_offset(4) + r_info(4)，addend 存放在目标槽位
+                                rInfo = readInt32(relaData, ri + 4) & 0xFFFFFFFFL;
+                            }
+                        } else {
+                            rOffset = readLong64(relaData, ri);
+                            rInfo = readLong64(relaData, ri + 8);
+                            if (isRela) rAddend = readLong64(relaData, ri + 16);
+                        }
+                        int rType = arm32 ? (int) (rInfo & 0xFFL) : (int) (rInfo & 0xFFFFFFFFL);
+                        if (rType != relativeType) continue;
 
                         boolean isInit = initHdr != null && rOffset >= initHdr.sh_addr
                                 && rOffset < initHdr.sh_addr + initHdr.sh_size;
                         boolean isFini = finiHdr != null && rOffset >= finiHdr.sh_addr
                                 && rOffset < finiHdr.sh_addr + finiHdr.sh_size;
 
-                        if (isInit || isFini) {
-                            relaSlots.add(rOffset);
-                            if (!knownOffsets.contains(rAddend)) {
-                                String label = String.format("sub_%X", rAddend);
-                                String src = isInit ? "init_array" : "fini_array";
-                                funcSet.add(new NativeFunction(label, rAddend, 0, src));
-                                knownOffsets.add(rAddend);
-                                Log.d(TAG, src + " rela: " + label);
-                            }
+                        if (!isInit && !isFini) continue;
+
+                        if (!isRela) {
+                            // REL：addend 在槽位里，留给后面的"直接读取"处理
+                            continue;
+                        }
+                        relaSlots.add(rOffset);
+                        if (rAddend != 0 && !knownOffsets.contains(rAddend)) {
+                            String label = String.format("sub_%X", rAddend);
+                            String src = isInit ? "init_array" : "fini_array";
+                            NativeFunction nf = new NativeFunction(label, rAddend, 0, src);
+                            funcSet.add(nf);
+                            knownOffsets.add(rAddend);
+                            Log.d(TAG, src + " rela: " + label);
                         }
                     }
                 }
@@ -337,6 +398,7 @@ public class ElfParser {
             // 直接读取 init_array/fini_array 内容 (仅读取没有被重定位覆盖的槽位)
             ElfSectionHeader[] arrayHdrs = {initHdr, finiHdr};
             String[] arrayNames = {"init_array", "fini_array"};
+            int ptrSize = arm32 ? 4 : 8;
             for (int a = 0; a < arrayHdrs.length; a++) {
                 ElfSectionHeader hdr = arrayHdrs[a];
                 if (hdr == null || hdr.sh_size == 0) continue;
@@ -345,15 +407,19 @@ public class ElfParser {
                 byte[] data = new byte[count];
                 raf.seek(off);
                 raf.readFully(data);
-                for (int p = 0; p + 8 <= count; p += 8) {
+                for (int p = 0; p + ptrSize <= count; p += ptrSize) {
                     long slotVa = hdr.sh_addr + p;
                     // 跳过已被重定位覆盖的槽位 (重定位的addend才是真实值)
                     if (relaSlots.contains(slotVa)) continue;
-                    long addr = readLong64(data, p);
-                    if (addr == 0 || addr == -1) continue;
+                    long addr = arm32 ? (readInt32(data, p) & 0xFFFFFFFFL) : readLong64(data, p);
+                    boolean thumb = arm32 && (addr & 1L) != 0;
+                    if (thumb) addr &= ~1L;
+                    if (addr == 0 || addr == -1 || addr == 0xFFFFFFFFL) continue;
                     if (!knownOffsets.contains(addr)) {
                         String label = String.format("sub_%X", addr);
-                        funcSet.add(new NativeFunction(label, addr, 0, arrayNames[a]));
+                        NativeFunction nf = new NativeFunction(label, addr, 0, arrayNames[a]);
+                        nf.setThumb(thumb);
+                        funcSet.add(nf);
                         knownOffsets.add(addr);
                         Log.d(TAG, arrayNames[a] + " direct: " + label);
                     }
@@ -368,7 +434,21 @@ public class ElfParser {
             // balanced / max_coverage 都扫描所有可执行段发现函数
             // balanced 保守阈值, max_coverage 激进阈值
             if (!preciseMode) {
-                discoverFunctionsInExecutableSections(raf, elfFile, funcSet, knownOffsets, maxCoverageMode);
+                if (arm32) {
+                    discoverFunctionsArm32(raf, elfFile, funcSet, knownOffsets, maxCoverageMode);
+                } else {
+                    discoverFunctionsInExecutableSections(raf, elfFile, funcSet, knownOffsets, maxCoverageMode);
+                }
+            }
+
+            // ARM32：符号表里带 size=0 的函数用指令形态估算大小，不做 AArch64 的 BL 扫描
+            if (arm32) {
+                fillArm32Sizes(raf, elfFile, funcSet, textFileOff, textStart, textEnd);
+                List<NativeFunction> result32 = deduplicateFunctionsByOffset(funcSet);
+                clampFunctionSizesToNextStart(result32);
+                raf.close();
+                Log.i(TAG, "ARM32 functions: " + result32.size());
+                return result32;
             }
 
             List<Long> sortedKnownOffsets = new ArrayList<>(knownOffsets);
@@ -705,6 +785,97 @@ public class ElfParser {
         }
 
         Log.i(TAG, "Executable scan discovered " + totalDiscovered + " functions total (aggressive=" + aggressive + ")");
+    }
+
+    // ======================================================================
+    // ARM32 函数发现
+    // ======================================================================
+
+    /**
+     * ARM32 版本的函数发现：按序言特征 + BL/BLX 目标扫描所有可执行段。
+     *
+     * <p>与 AArch64 版本的区别：
+     * <ul>
+     *   <li>指令长度不固定（2 / 4 字节），不能按 4 字节步进</li>
+     *   <li>同一段内可能混排 ARM 与 Thumb，靠序言编码区分</li>
+     *   <li>没有 ADRP/ADDR 相对寻址特征，literal pool 需靠"全 0 / 全 F"过滤</li>
+     * </ul>
+     */
+    private static void discoverFunctionsArm32(RandomAccessFile raf, ElfFile elfFile,
+                                               Set<NativeFunction> funcSet, Set<Long> knownOffsets,
+                                               boolean aggressive) throws IOException {
+        int total = 0;
+        for (int i = 0; i < elfFile.e_shnum; i++) {
+            ElfSectionHeader h = elfFile.getSection(i).header;
+            if (!isExecutableSection(h) || h.sh_size <= 0) continue;
+            if (h.sh_offset <= 0 || h.sh_offset >= raf.length()) continue;
+
+            long segSize = Math.min(h.sh_size, 32L * 1024 * 1024);
+            if (segSize < 8) continue;
+
+            byte[] code = new byte[(int) segSize];
+            raf.seek(h.sh_offset);
+            int read = raf.read(code);
+            if (read < 8) continue;
+
+            Arm32Scanner.ScanResult r = Arm32Scanner.scanSegment(
+                    code, h.sh_addr, h.sh_addr + h.sh_size, knownOffsets, aggressive);
+
+            for (Long start : r.starts) {
+                if (knownOffsets.contains(start)) continue;
+                Integer size = r.sizes.get(start);
+                Boolean thumb = r.thumbFlags.get(start);
+                NativeFunction nf = new NativeFunction(
+                        String.format("sub_%X", start), start,
+                        size == null ? 0 : size, "text_scan");
+                nf.setThumb(thumb != null && thumb);
+                funcSet.add(nf);
+                knownOffsets.add(start);
+                total++;
+            }
+        }
+        Log.i(TAG, "ARM32 exec scan discovered " + total + " functions (aggressive=" + aggressive + ")");
+    }
+
+    /** 给 ARM32 中 size=0 的符号补一个基于指令形态的估算大小 */
+    private static void fillArm32Sizes(RandomAccessFile raf, ElfFile elfFile,
+                                       Set<NativeFunction> funcSet,
+                                       long textFileOff, long textStart, long textEnd) {
+        try {
+            if (textEnd <= textStart) return;
+            long textSize = Math.min(textEnd - textStart, 64L * 1024 * 1024);
+            byte[] code = new byte[(int) textSize];
+            raf.seek(textFileOff);
+            int read = raf.read(code);
+            if (read < 8) return;
+
+            List<Long> starts = new ArrayList<>();
+            for (NativeFunction f : funcSet) {
+                if (f.getOffset() >= textStart && f.getOffset() < textEnd) starts.add(f.getOffset());
+            }
+            starts.sort(Long::compareTo);
+
+            for (NativeFunction f : funcSet) {
+                if (f.getSize() > 0) continue;
+                long va = f.getOffset();
+                if (va < textStart || va >= textEnd) {
+                    f.setSize(64);
+                    continue;
+                }
+                int off = (int) (va - textStart);
+                long next = textEnd;
+                for (Long s : starts) {
+                    if (s > va) { next = s; break; }
+                }
+                int max = (int) Math.min(next - va, 16384);
+                byte[] window = new byte[Math.min(code.length - off, Math.max(max, 16))];
+                System.arraycopy(code, off, window, 0, window.length);
+                int size = Arm32Scanner.estimateFunctionSize(window, 0, f.isThumb(), max);
+                f.setSize(Math.max(4, Math.min(size, max)));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "fillArm32Sizes failed: " + e.getMessage());
+        }
     }
 
     private static int scanSegmentForFunctions(
@@ -1267,42 +1438,115 @@ public class ElfParser {
      * @return 文件偏移, 如果无法转换则返回 virtualAddr 本身
      */
     public static long virtualAddrToFileOffset(String soPath, long virtualAddr) {
-        try {
-            RandomAccessFile raf = new RandomAccessFile(soPath, "r");
-            byte[] ehdr = new byte[64];
-            raf.readFully(ehdr);
-
-            boolean is64 = ehdr[4] == 2;
-            if (!is64) { raf.close(); return virtualAddr; }
-
-            // e_phoff (偏移 32, 8 bytes), e_phentsize (偏移 54, 2 bytes), e_phnum (偏移 56, 2 bytes)
-            long phoff = readLong64(ehdr, 32);
-            int phentsize = (ehdr[54] & 0xFF) | ((ehdr[55] & 0xFF) << 8);
-            int phnum = (ehdr[56] & 0xFF) | ((ehdr[57] & 0xFF) << 8);
-
-            for (int i = 0; i < phnum; i++) {
-                byte[] phdr = new byte[phentsize];
-                raf.seek(phoff + (long) i * phentsize);
-                raf.readFully(phdr);
-
-                int pType = readInt32(phdr, 0);
-                if (pType != 1) continue; // PT_LOAD = 1
-
-                long pOffset = readLong64(phdr, 8);
-                long pVaddr = readLong64(phdr, 16);
-                long pFilesz = readLong64(phdr, 32);
-                long pMemsz = readLong64(phdr, 40);
-
-                if (virtualAddr >= pVaddr && virtualAddr < pVaddr + pFilesz) {
-                    raf.close();
-                    return pOffset + (virtualAddr - pVaddr);
+        try (RandomAccessFile raf = new RandomAccessFile(soPath, "r")) {
+            // [p_offset, p_vaddr, p_filesz, p_memsz]
+            java.util.List<long[]> loads = readPtLoad(raf);
+            for (long[] seg : loads) {
+                if (virtualAddr >= seg[1] && virtualAddr < seg[1] + seg[2]) {
+                    return seg[0] + (virtualAddr - seg[1]);
                 }
             }
-            raf.close();
         } catch (Exception e) {
             Log.w(TAG, "VA to file offset conversion failed: " + e.getMessage());
         }
         return virtualAddr;
+    }
+
+    /**
+     * 文件偏移转虚拟地址（按 PT_LOAD 段反查），用于字节搜索结果定位。
+     */
+    public static long fileOffsetToVirtualAddr(String soPath, long fileOffset) {
+        try (RandomAccessFile raf = new RandomAccessFile(soPath, "r")) {
+            java.util.List<long[]> loads = readPtLoad(raf);
+            for (long[] seg : loads) {
+                if (fileOffset >= seg[0] && fileOffset < seg[0] + seg[2]) {
+                    return seg[1] + (fileOffset - seg[0]);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "file offset to VA conversion failed: " + e.getMessage());
+        }
+        return fileOffset;
+    }
+
+    /**
+     * 读取所有 PT_LOAD 段，自动适配 ELF32 / ELF64 的程序头布局。
+     *
+     * <p>差异点：
+     * <ul>
+     *   <li>Elf32_Phdr 为 32 字节，p_offset 在 4、p_vaddr 在 8、p_filesz 在 16</li>
+     *   <li>Elf64_Phdr 为 56 字节，p_offset 在 8、p_vaddr 在 16、p_filesz 在 32</li>
+     *   <li>e_phoff 在 28(32 位) / 32(64 位)，e_phentsize 在 42 / 54，e_phnum 在 44 / 56</li>
+     * </ul>
+     *
+     * @return 每项为 {p_offset, p_vaddr, p_filesz, p_memsz}
+     */
+    public static java.util.List<long[]> readPtLoad(RandomAccessFile raf) throws IOException {
+        java.util.List<long[]> result = new ArrayList<>();
+        byte[] ehdr = new byte[64];
+        raf.seek(0);
+        int n = raf.read(ehdr);
+        if (n < 52) return result;
+
+        boolean is64 = ehdr[4] == 2;
+        boolean le = ehdr[5] != 2;
+        if (!le) {
+            // 大端 ARM/ARM64 极少见，按大端解析
+            long phoff = is64 ? readLong64BE(ehdr, 32) : (readInt32BE(ehdr, 28) & 0xFFFFFFFFL);
+            int phentsize = is64 ? u16be(ehdr, 54) : u16be(ehdr, 42);
+            int phnum = is64 ? u16be(ehdr, 56) : u16be(ehdr, 44);
+            readPhdrLoop(raf, result, phoff, phentsize, phnum, true, true);
+            return result;
+        }
+
+        long phoff = is64 ? readLong64(ehdr, 32) : (readInt32(ehdr, 28) & 0xFFFFFFFFL);
+        int phentsize = is64 ? ((ehdr[54] & 0xFF) | ((ehdr[55] & 0xFF) << 8))
+                : ((ehdr[42] & 0xFF) | ((ehdr[43] & 0xFF) << 8));
+        int phnum = is64 ? ((ehdr[56] & 0xFF) | ((ehdr[57] & 0xFF) << 8))
+                : ((ehdr[44] & 0xFF) | ((ehdr[45] & 0xFF) << 8));
+        readPhdrLoop(raf, result, phoff, phentsize, phnum, is64, false);
+        return result;
+    }
+
+    private static void readPhdrLoop(RandomAccessFile raf, java.util.List<long[]> out,
+                                     long phoff, int phentsize, int phnum,
+                                     boolean is64, boolean bigEndian) throws IOException {
+        if (phentsize <= 0 || phnum <= 0 || phnum > 512) return;
+        byte[] phdr = new byte[phentsize];
+        for (int i = 0; i < phnum; i++) {
+            raf.seek(phoff + (long) i * phentsize);
+            raf.readFully(phdr);
+            int pType = bigEndian ? readInt32BE(phdr, 0) : readInt32(phdr, 0);
+            if (pType != 1) continue; // PT_LOAD
+            long pOffset, pVaddr, pFilesz, pMemsz;
+            if (is64) {
+                pOffset = bigEndian ? readLong64BE(phdr, 8) : readLong64(phdr, 8);
+                pVaddr = bigEndian ? readLong64BE(phdr, 16) : readLong64(phdr, 16);
+                pFilesz = bigEndian ? readLong64BE(phdr, 32) : readLong64(phdr, 32);
+                pMemsz = bigEndian ? readLong64BE(phdr, 40) : readLong64(phdr, 40);
+            } else {
+                pOffset = (bigEndian ? readInt32BE(phdr, 4) : readInt32(phdr, 4)) & 0xFFFFFFFFL;
+                pVaddr = (bigEndian ? readInt32BE(phdr, 8) : readInt32(phdr, 8)) & 0xFFFFFFFFL;
+                pFilesz = (bigEndian ? readInt32BE(phdr, 16) : readInt32(phdr, 16)) & 0xFFFFFFFFL;
+                pMemsz = (bigEndian ? readInt32BE(phdr, 20) : readInt32(phdr, 20)) & 0xFFFFFFFFL;
+            }
+            out.add(new long[]{pOffset, pVaddr, pFilesz, pMemsz});
+        }
+    }
+
+    private static int u16be(byte[] b, int o) {
+        return ((b[o] & 0xFF) << 8) | (b[o + 1] & 0xFF);
+    }
+
+    private static int readInt32BE(byte[] b, int o) {
+        return ((b[o] & 0xFF) << 24) | ((b[o + 1] & 0xFF) << 16)
+                | ((b[o + 2] & 0xFF) << 8) | (b[o + 3] & 0xFF);
+    }
+
+    private static long readLong64BE(byte[] b, int o) {
+        long v = 0;
+        for (int i = 0; i < 8; i++) v = (v << 8) | (b[o + i] & 0xFFL);
+        return v;
     }
 
     /**
@@ -1432,6 +1676,73 @@ public class ElfParser {
         }
     }
 
+    /** 符号表条目（函数、对象、类型信息符号等），供 RTTI / 依赖分析使用 */
+    public static class SymbolInfo {
+        public final String name;
+        public final long value;
+        public final long size;
+        public final int type;
+        public final String source;
+        /** 所属节索引；0 表示未定义（导入符号） */
+        public final int shndx;
+        /** 绑定属性：0=LOCAL 1=GLOBAL 2=WEAK */
+        public final int binding;
+
+        public SymbolInfo(String name, long value, long size, int type, String source) {
+            this(name, value, size, type, source, 1, 1);
+        }
+
+        public SymbolInfo(String name, long value, long size, int type, String source,
+                          int shndx, int binding) {
+            this.name = name;
+            this.value = value;
+            this.size = size;
+            this.type = type;
+            this.source = source;
+            this.shndx = shndx;
+            this.binding = binding;
+        }
+
+        public boolean isUndefined() {
+            return shndx == 0;
+        }
+    }
+
+    /**
+     * 解析所有符号（不限于 STT_FUNC）。
+     *
+     * <p>RTTI 还原要用 STT_OBJECT 的 _ZTV/_ZTI/_ZTS，依赖图要用未定义符号，
+     * 因此这里不做类型过滤，把 symtab 与 dynsym 的内容原样交出去。
+     */
+    public static List<SymbolInfo> parseSymbols(String soPath) throws IOException {
+        List<SymbolInfo> out = new ArrayList<>();
+        ElfFile elfFile = safeOpenElf(soPath);
+
+        for (int i = 0; i < elfFile.e_shnum; i++) {
+            ElfSection section = elfFile.getSection(i);
+            if (section == null) continue;
+            ElfSectionHeader header = section.header;
+            if (header == null) continue;
+            if (header.sh_type != ElfSectionHeader.SHT_SYMTAB
+                    && header.sh_type != ElfSectionHeader.SHT_DYNSYM) {
+                continue;
+            }
+
+            String source = (header.sh_type == ElfSectionHeader.SHT_DYNSYM) ? "dynsym" : "symtab";
+            ElfSymbolTableSection symSection = (ElfSymbolTableSection) section;
+            if (symSection.symbols == null) continue;
+
+            for (ElfSymbol sym : symSection.symbols) {
+                if (sym == null) continue;
+                String name = sym.getName();
+                if (name == null || name.isEmpty()) continue;
+                out.add(new SymbolInfo(name, sym.st_value, sym.st_size, sym.getType(), source,
+                        sym.st_shndx, sym.getBinding()));
+            }
+        }
+        return out;
+    }
+
     /**
      * 解析SO文件的所有段(Section)信息
      */
@@ -1468,6 +1779,10 @@ public class ElfParser {
     public static List<PltEntry> parsePlt(String soPath) throws IOException {
         List<PltEntry> pltEntries = new ArrayList<>();
         ElfFile elfFile = safeOpenElf(soPath);
+        ElfArch arch = ElfArch.detect(soPath);
+        if (arch.isArm32()) {
+            return parsePltArm32(soPath, elfFile);
+        }
 
         // 获取.dynsym用于解析符号
         ElfSymbolTableSection dynsym = null;
@@ -1605,5 +1920,116 @@ public class ElfParser {
 
         Log.i(TAG, "Parsed PLT: " + pltEntries.size() + " entries");
         return pltEntries;
+    }
+
+    // ======================================================================
+    // ARM32 PLT
+    // ======================================================================
+
+    /**
+     * ARM32 的 PLT 解析。
+     *
+     * <p>与 AArch64 的差异：
+     * <ul>
+     *   <li>重定位节通常是 {@code .rel.plt}（SHT_REL，8 字节条目），
+     *       而非 {@code .rela.plt}（SHT_RELA，24 字节）</li>
+     *   <li>{@code r_info} 只有 32 位：符号索引在高 24 位、类型在低 8 位</li>
+     *   <li>PLT 条目 12 字节、头部约 20 字节（ARM/Thumb 一致，由 lld 统一定义）</li>
+     * </ul>
+     */
+    private static List<PltEntry> parsePltArm32(String soPath, ElfFile elfFile) throws IOException {
+        List<PltEntry> entries = new ArrayList<>();
+
+        ElfSymbolTableSection dynsym = null;
+        ElfSection pltSection = null;
+        ElfSection relPltSection = null;
+
+        for (int i = 0; i < elfFile.e_shnum; i++) {
+            ElfSection sec = elfFile.getSection(i);
+            String name = sec.header.getName();
+            if (name == null) name = "";
+            if (sec.header.sh_type == ElfSectionHeader.SHT_DYNSYM && dynsym == null) {
+                dynsym = (ElfSymbolTableSection) sec;
+            }
+            if (".plt".equals(name)) pltSection = sec;
+            if (name.contains("rel.plt") || name.equals(".rel.dyn")) {
+                if (relPltSection == null || name.contains("rel.plt")) relPltSection = sec;
+            }
+        }
+
+        if (pltSection == null || dynsym == null) {
+            Log.w(TAG, "ARM32: no .plt or .dynsym");
+            return entries;
+        }
+
+        long pltAddr = pltSection.header.sh_addr;
+        long pltSize = pltSection.header.sh_size;
+
+        int numEntries = 0;
+        boolean isRela = relPltSection != null && relPltSection.header.sh_type == 4;
+        int relEntrySize = isRela ? 12 : 8;
+        long relOffset = relPltSection == null ? 0 : relPltSection.header.sh_offset;
+        long relSize = relPltSection == null ? 0 : relPltSection.header.sh_size;
+
+        byte[] relData = null;
+        if (relPltSection != null && relSize > 0 && relSize < 8L * 1024 * 1024) {
+            relData = new byte[(int) relSize];
+            try (RandomAccessFile raf = new RandomAccessFile(soPath, "r")) {
+                raf.seek(relOffset);
+                raf.readFully(relData);
+            }
+            // 只统计 R_ARM_JUMP_SLOT(22) / R_ARM_GLOB_DAT(21)，避免把 .rel.dyn 里
+            // 成千上万条无关重定位算进 PLT 条目数
+            for (int p = 0; p + relEntrySize <= relData.length; p += relEntrySize) {
+                long rInfo = readInt32(relData, p + 4) & 0xFFFFFFFFL;
+                int type = (int) (rInfo & 0xFF);
+                if (type == 22 || type == 21) numEntries++;
+            }
+        }
+
+        if (numEntries <= 0) {
+            Log.w(TAG, "ARM32: no JUMP_SLOT relocation, pltSize=" + pltSize);
+            return entries;
+        }
+
+        // 反推头部大小：优先假设 12 字节条目
+        long headerSize = pltSize - (long) numEntries * 12;
+        long entrySize = 12;
+        if (headerSize < 8 || headerSize > 64) {
+            // 有可能是 8 字节条目（某些精简链接器）
+            long alt = pltSize - (long) numEntries * 8;
+            if (alt >= 8 && alt <= 64) {
+                entrySize = 8;
+                headerSize = alt;
+            } else {
+                headerSize = 20;
+                entrySize = 12;
+            }
+        }
+        Log.i(TAG, String.format("ARM32 PLT: header=%d entry=%d stubs=%d",
+                headerSize, entrySize, numEntries));
+
+        int pltIndex = 0;
+        for (int p = 0; p + relEntrySize <= relData.length; p += relEntrySize) {
+            long rOffset = readInt32(relData, p) & 0xFFFFFFFFL;
+            long rInfo = readInt32(relData, p + 4) & 0xFFFFFFFFL;
+            int symIdx = (int) ((rInfo >>> 8) & 0xFFFFFF);
+            int rType = (int) (rInfo & 0xFF);
+            // R_ARM_JUMP_SLOT = 22, R_ARM_GLOB_DAT = 21
+            if (rType != 22 && rType != 21) continue;
+
+            long pltEntryAddr = pltAddr + headerSize + (long) pltIndex * entrySize;
+            pltIndex++;
+            if (pltEntryAddr < pltAddr || pltEntryAddr >= pltAddr + pltSize) continue;
+            if (symIdx <= 0 || symIdx >= dynsym.symbols.length) continue;
+
+            String name = dynsym.symbols[symIdx].getName();
+            if (name == null || name.isEmpty()) continue;
+
+            entries.add(new PltEntry(pltEntryAddr, entrySize, name, rOffset));
+        }
+
+        Log.i(TAG, "Parsed ARM32 PLT: " + entries.size() + " entries");
+        return entries;
     }
 }

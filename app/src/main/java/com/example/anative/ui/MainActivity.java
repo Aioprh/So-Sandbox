@@ -30,6 +30,8 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.anative.R;
 import com.example.anative.FileUtils;
+import com.example.anative.core.AnalysisCache;
+import com.example.anative.core.ElfArch;
 import com.example.anative.core.ElfParser;
 import com.example.anative.core.DataHolder;
 import com.example.anative.core.NativeFunction;
@@ -184,11 +186,28 @@ public class MainActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
+        // 若上次开启了 MCP 服务，启动时自动恢复
+        restoreMcpServiceIfNeeded();
+
         // 处理从其他应用打开的文件
         handleIncomingFile();
 
-        // 启动时检测更新
-        checkForUpdateOnStart();
+    }
+
+    /**
+     * 上次启用了 MCP 服务时，应用启动后自动恢复（前台服务被系统回收的场景）。
+     */
+    private void restoreMcpServiceIfNeeded() {
+        try {
+            if (com.example.anative.mcp.McpPrefs.isEnabled(this)
+                    && !com.example.anative.mcp.McpManager.isRunning()) {
+                Intent intent = new Intent(this, com.example.anative.mcp.McpService.class);
+                intent.setAction(com.example.anative.mcp.McpService.ACTION_START);
+                androidx.core.content.ContextCompat.startForegroundService(this, intent);
+            }
+        } catch (Exception e) {
+            Log.w("MainActivity", "恢复 MCP 服务失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -236,7 +255,14 @@ public class MainActivity extends AppCompatActivity {
 
     private void setupRecentProjects() {
         recentProjects = loadRecentProjects();
-        binding.rvRecentProjects.setLayoutManager(new LinearLayoutManager(this));
+        // 平板/横屏（>=600dp）用两列，避免单列把内容拉得过宽
+        int widthDp = getResources().getConfiguration().screenWidthDp;
+        if (widthDp >= 600) {
+            binding.rvRecentProjects.setLayoutManager(
+                    new androidx.recyclerview.widget.GridLayoutManager(this, 2));
+        } else {
+            binding.rvRecentProjects.setLayoutManager(new LinearLayoutManager(this));
+        }
         recentAdapter = new RecentProjectsAdapter(recentProjects, this::onRecentProjectClick);
         binding.rvRecentProjects.setAdapter(recentAdapter);
 
@@ -433,7 +459,7 @@ public class MainActivity extends AppCompatActivity {
                 DataHolder.getInstance().setDlopenHandle(soLoader.getDlopenHandle());
                 String discoveryMode = getSharedPreferences("app_prefs", MODE_PRIVATE)
                         .getString(SettingsActivity.PREF_FUNCTION_DISCOVERY_MODE, "balanced");
-                functions = ElfParser.parseFunctions(path, discoveryMode);
+                functions = AnalysisCache.functions(this, path, discoveryMode);
                 DataHolder.getInstance().setFunctions(functions);
 
                 runOnUiThread(() -> {
@@ -481,7 +507,7 @@ public class MainActivity extends AppCompatActivity {
                 DataHolder.getInstance().setDlopenHandle(soLoader.getDlopenHandle());
                 String discoveryMode = getSharedPreferences("app_prefs", MODE_PRIVATE)
                         .getString(SettingsActivity.PREF_FUNCTION_DISCOVERY_MODE, "balanced");
-                functions = ElfParser.parseFunctions(soPath, discoveryMode);
+                functions = AnalysisCache.functions(this, soPath, discoveryMode);
                 DataHolder.getInstance().setFunctions(functions);
 
                 // 预加载字符串表和 PLT 表（反汇编 / 函数跳转识别都依赖它们）
@@ -529,7 +555,7 @@ public class MainActivity extends AppCompatActivity {
         String soPath = soLoader.getLoadedSoPath();
         if (soPath == null) return;
         try {
-            strings = ElfParser.parseStrings(soPath);
+            strings = AnalysisCache.strings(this, soPath);
         } catch (Exception e) {
             Log.e("MainActivity", "parseStrings failed: " + e.getMessage());
             strings = new ArrayList<>();
@@ -541,7 +567,7 @@ public class MainActivity extends AppCompatActivity {
         String soPath = soLoader.getLoadedSoPath();
         if (soPath == null) return;
         try {
-            pltEntries = ElfParser.parsePlt(soPath);
+            pltEntries = AnalysisCache.plt(this, soPath);
         } catch (Exception e) {
             Log.e("MainActivity", "parsePlt failed: " + e.getMessage());
             pltEntries = new ArrayList<>();
@@ -556,6 +582,26 @@ public class MainActivity extends AppCompatActivity {
         String baseText = baseAddr != 0 ? String.format("基址: 0x%X", baseAddr) : "静态分析模式";
         binding.tvBaseAddr.setText(baseText);
         binding.tvFuncCount.setText(String.format("函数: %d (字符串/PLT按需加载)", funcCount));
+        updateFingerprint();
+    }
+
+    /**
+     * 根据已解析的函数/字符串/PLT 给出库指纹（Unity、Flutter、加固等）。
+     */
+    private void updateFingerprint() {
+        String soPath = DataHolder.getInstance().getSoPath();
+        if (soPath == null || soPath.isEmpty()) {
+            binding.tvFingerprint.setVisibility(android.view.View.GONE);
+            return;
+        }
+        java.util.List<com.example.anative.core.LibraryFingerprint.Match> matches =
+                com.example.anative.core.LibraryFingerprint.detect(soPath,
+                        DataHolder.getInstance().getFunctions(),
+                        DataHolder.getInstance().getStrings(),
+                        DataHolder.getInstance().getPltEntries());
+        binding.tvFingerprint.setText("特征: "
+                + com.example.anative.core.LibraryFingerprint.summary(matches));
+        binding.tvFingerprint.setVisibility(android.view.View.VISIBLE);
     }
 
     private void showLoading(boolean show) {
@@ -600,11 +646,103 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
+    /**
+     * 把当前函数表导出成 PC 端工具能直接跑的脚本。
+     *
+     * <p>手机上看完再去 IDA 里一个个重命名太浪费，这里直接把符号和注释写进去。
+     */
+    private void showExportScriptDialog() {
+        List<com.example.anative.core.NativeFunction> functions =
+                DataHolder.getInstance().getFunctions();
+        if (functions == null || functions.isEmpty()) {
+            Toast.makeText(this, "尚未加载 SO 文件", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String[] formats = {
+                "IDA .py（批量命名 + 注释）",
+                "Ghidra Jython 脚本",
+                "C 头文件（函数原型）"
+        };
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("导出符号脚本（" + functions.size() + " 个函数）")
+                .setItems(formats, (d, which) -> exportScript(functions, which))
+                .show();
+    }
+
+    private void exportScript(List<com.example.anative.core.NativeFunction> functions, int which) {
+        String soPath = DataHolder.getInstance().getSoPath();
+        String moduleName = soPath == null ? "unknown" : new java.io.File(soPath).getName();
+
+        String content;
+        String ext;
+        String prefix;
+        if (which == 0) {
+            content = com.example.anative.core.Exporters.idaPython(moduleName, functions, 5000);
+            ext = "py";
+            prefix = "ida_symbols_";
+        } else if (which == 1) {
+            content = com.example.anative.core.Exporters.ghidraScript(moduleName, functions, 5000);
+            ext = "py";
+            prefix = "ghidra_symbols_";
+        } else {
+            content = com.example.anative.core.Exporters.cHeader(moduleName, functions, null, null);
+            ext = "h";
+            prefix = "symbols_";
+        }
+
+        try {
+            java.io.File dir = new java.io.File(
+                    android.os.Environment.getExternalStorageDirectory(), "SoSandbox");
+            if (!dir.exists() && !dir.mkdirs()) {
+                Toast.makeText(this, "无法创建目录", Toast.LENGTH_LONG).show();
+                return;
+            }
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+                    .format(new java.util.Date());
+            java.io.File out = new java.io.File(dir, prefix + stamp + "." + ext);
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                fos.write(content.getBytes("UTF-8"));
+            }
+            Toast.makeText(this, "已导出：" + out.getAbsolutePath(), Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "导出失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         if (item.getItemId() == R.id.action_settings) {
             Intent intent = new Intent(this, SettingsActivity.class);
             startActivity(intent);
+            return true;
+        } else if (item.getItemId() == R.id.action_string_decoder) {
+            startActivity(new Intent(this, StringDecoderActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_global_search) {
+            startActivity(new Intent(this, GlobalSearchActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_call_graph) {
+            startActivity(new Intent(this, CallGraphActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_so_diff) {
+            startActivity(new Intent(this, SoDiffActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_asm_search) {
+            startActivity(new Intent(this, AsmSearchActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_class_list) {
+            startActivity(new Intent(this, ClassListActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_dependency) {
+            startActivity(new Intent(this, DependencyActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_clone) {
+            startActivity(new Intent(this, CloneActivity.class));
+            return true;
+        } else if (item.getItemId() == R.id.action_export_script) {
+            showExportScriptDialog();
             return true;
         } else if (item.getItemId() == R.id.action_view_crash_log) {
             if (CrashHandler.hasCrashLog(this)) {
@@ -620,6 +758,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        updateFingerprint();
         // 检查从设置页面返回后，主题是否发生变化
         int newMode = AppCompatDelegate.getDefaultNightMode();
         if (newMode != currentNightMode && newMode != -1) {
@@ -704,13 +843,13 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private static final String CHANGELOG_VERSION = "1.5";
+    private static final String CHANGELOG_VERSION = "1.8";
     private static final String CHANGELOG_TEXT =
-            "• 项目已完全离线开源，移除所有云端依赖\n" +
-            "• 动态注册 Hook 改为本地执行，不再需要云端服务器\n" +
-            "• 设置页更新公告改为本地展示\n" +
-            "• 代码已开源至 GitHub\n" +
-            "• 后续更新随缘";
+            "• 新增修改记录：补丁差异可视，支持逐条撤销/重做与全部回滚\n" +
+            "• 新增全局搜索：函数名、地址、字符串一处搜完\n" +
+            "• 新增字符串解码：Base64/Hex/URL/XOR 爆破/RC4\n" +
+            "• 新增库指纹：识别 Unity、Flutter、UPX、加固等特征\n" +
+            "• MCP 新增特征码搜索、批量修改、差异查看、报告导出与只读模式";
 
     private void showChangelogIfNeeded() {
         SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
@@ -827,72 +966,4 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private static final String UPDATE_URL = "https://api.github.com/repos/2452151196/So-Sandbox/releases/latest";
-
-    /**
-     * 启动时静默检测更新，有新版本才弹窗
-     */
-    private void checkForUpdateOnStart() {
-        SharedPreferences prefs = getSharedPreferences("update_prefs", MODE_PRIVATE);
-        long lastCheck = prefs.getLong("last_check_time", 0);
-        long now = System.currentTimeMillis();
-        // 每24小时最多检测一次
-        if (now - lastCheck < 24 * 60 * 60 * 1000L) return;
-        new Thread(() -> {
-            try {
-                java.net.URL url = new java.net.URL(UPDATE_URL);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-
-                java.io.BufferedReader reader = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                reader.close();
-
-                org.json.JSONObject json = new org.json.JSONObject(response.toString());
-                String latestVersion = json.getString("tag_name").replace("v", "");
-                String releaseUrl = json.getString("html_url");
-                String releaseNotes = json.optString("body", "");
-
-                String currentVersion = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-                boolean hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
-
-                prefs.edit().putLong("last_check_time", now).apply();
-
-                if (hasUpdate) {
-                    runOnUiThread(() -> {
-                        new AlertDialog.Builder(this)
-                                .setTitle("发现新版本")
-                                .setMessage("当前版本：v" + currentVersion + "\n最新版本：v" + latestVersion + "\n\n" + releaseNotes)
-                                .setPositiveButton("前往更新", (d, w) -> {
-                                    Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(releaseUrl));
-                                    startActivity(browserIntent);
-                                })
-                                .setNegativeButton("以后再说", null)
-                                .show();
-                    });
-                }
-            } catch (Exception e) {
-                Log.w("MainActivity", "更新检测失败: " + e.getMessage());
-            }
-        }).start();
-    }
-
-    private int compareVersions(String v1, String v2) {
-        String[] parts1 = v1.split("\\.");
-        String[] parts2 = v2.split("\\.");
-        int length = Math.max(parts1.length, parts2.length);
-        for (int i = 0; i < length; i++) {
-            int p1 = i < parts1.length ? Integer.parseInt(parts1[i]) : 0;
-            int p2 = i < parts2.length ? Integer.parseInt(parts2[i]) : 0;
-            if (p1 != p2) return p1 - p2;
-        }
-        return 0;
-    }
 }

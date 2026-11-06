@@ -4,6 +4,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- MCP 服务：前台服务 + 通知 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- 基础存储权限 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -99,6 +104,45 @@
         <activity
             android:name=".ui.SettingsActivity"
             android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.McpActivity"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.AboutActivity"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.PatchListActivity"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.GlobalSearchActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.StringDecoderActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.SoDiffActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.CallGraphActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.ClassListActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.AsmSearchActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.DependencyActivity"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.CloneActivity"
+            android:parentActivityName=".ui.MainActivity" />
+
+        <!-- MCP 前台服务，保证后台可被客户端访问 -->
+        <service
+            android:name=".mcp.McpService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <activity
             android:name=".ui.DebuggerActivity"
             android:parentActivityName=".ui.FunctionDetailActivity" />

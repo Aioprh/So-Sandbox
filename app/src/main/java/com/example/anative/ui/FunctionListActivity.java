@@ -23,7 +23,6 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import com.example.anative.R;
 import com.example.anative.core.DataHolder;
 import com.example.anative.core.ElfParser;
-import com.example.anative.core.LicenseManager;
 import com.example.anative.core.NativeFunction;
 import com.example.anative.core.XRefScanner;
 import com.example.anative.databinding.ActivityFunctionListBinding;

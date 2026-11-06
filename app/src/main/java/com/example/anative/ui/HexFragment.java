@@ -240,10 +240,10 @@ public class HexFragment extends Fragment {
         long virtualAddr = (baseAddress > 0 && addr >= baseAddress) ? (addr - baseAddress) : addr;
         long fileOffset = ElfParser.virtualAddrToFileOffset(soPath, virtualAddr);
 
-        try (RandomAccessFile raf = new RandomAccessFile(soPath, "rw")) {
-            raf.seek(fileOffset);
-            raf.write(value & 0xFF);
-        }
+        com.example.anative.core.PatchManager.getInstance().apply(
+                soPath, fileOffset, new byte[]{value},
+                com.example.anative.core.PatchManager.Kind.HEX,
+                String.format("字节 0x%02X", value & 0xFF), virtualAddr);
     }
 
     /**

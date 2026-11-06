@@ -360,8 +360,9 @@
 
         </androidx.cardview.widget.CardView>
 
+                                <!-- MCP 服务 -->
         <androidx.cardview.widget.CardView
-            android:id="@+id/card_qq_group"
+            android:id="@+id/card_mcp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
@@ -375,8 +376,8 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
                 android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:padding="16dp">
 
                 <LinearLayout
@@ -388,17 +389,17 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="加入QQ群"
+                        android:text="MCP 服务"
                         android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold" />
 
                     <TextView
-                        android:id="@+id/tv_qq_group_status"
+                        android:id="@+id/tv_mcp_status"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="点击查看群信息"
+                        android:text="未启动"
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
 
@@ -407,17 +408,18 @@
                 <ImageView
                     android:layout_width="20dp"
                     android:layout_height="20dp"
-                    android:src="@drawable/ic_back"
+                    android:alpha="0.5"
                     android:rotation="180"
-                    android:tint="@color/text_secondary"
-                    android:alpha="0.5" />
+                    android:src="@drawable/ic_back"
+                    android:tint="@color/text_secondary" />
 
             </LinearLayout>
 
         </androidx.cardview.widget.CardView>
 
+        <!-- 修改记录 -->
         <androidx.cardview.widget.CardView
-            android:id="@+id/card_sponsor"
+            android:id="@+id/card_patch"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
@@ -431,8 +433,8 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
                 android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:padding="16dp">
 
                 <LinearLayout
@@ -444,17 +446,17 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="赞助激活"
+                        android:text="修改记录"
                         android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold" />
 
                     <TextView
-                        android:id="@+id/tv_sponsor_status"
+                        android:id="@+id/tv_patch_status"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="输入卡密激活功能"
+                        android:text="查看补丁差异，可逐条撤销"
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
 
@@ -463,17 +465,18 @@
                 <ImageView
                     android:layout_width="20dp"
                     android:layout_height="20dp"
-                    android:src="@drawable/ic_back"
+                    android:alpha="0.5"
                     android:rotation="180"
-                    android:tint="@color/text_secondary"
-                    android:alpha="0.5" />
+                    android:src="@drawable/ic_back"
+                    android:tint="@color/text_secondary" />
 
             </LinearLayout>
 
         </androidx.cardview.widget.CardView>
 
+        <!-- 分析缓存 -->
         <androidx.cardview.widget.CardView
-            android:id="@+id/card_check_update"
+            android:id="@+id/card_analysis_cache"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
@@ -487,8 +490,8 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
                 android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:padding="16dp">
 
                 <LinearLayout
@@ -500,17 +503,17 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="检测更新"
+                        android:text="分析缓存"
                         android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold" />
 
                     <TextView
-                        android:id="@+id/tv_update_status"
+                        android:id="@+id/tv_cache_status"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="当前版本"
+                        android:text="函数/字符串/PLT 解析结果会缓存，点此清除"
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
 
@@ -519,10 +522,10 @@
                 <ImageView
                     android:layout_width="20dp"
                     android:layout_height="20dp"
-                    android:src="@drawable/ic_back"
+                    android:alpha="0.5"
                     android:rotation="180"
-                    android:tint="@color/text_secondary"
-                    android:alpha="0.5" />
+                    android:src="@drawable/ic_back"
+                    android:tint="@color/text_secondary" />
 
             </LinearLayout>
 

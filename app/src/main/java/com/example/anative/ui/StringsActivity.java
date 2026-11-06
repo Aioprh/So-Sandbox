@@ -27,7 +27,6 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.example.anative.R;
 import com.example.anative.core.DataHolder;
 import com.example.anative.core.ElfParser;
-import com.example.anative.core.LicenseManager;
 import com.example.anative.core.NativeFunction;
 import com.example.anative.core.XRefScanner;
 import com.google.android.material.appbar.MaterialToolbar;

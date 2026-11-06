@@ -4,7 +4,6 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">cloud.bmobapp.com</domain>
         <domain includeSubdomains="true">cloud.bmob.cn</domain>
-        <domain includeSubdomains="true">chahaoma.xyz</domain>
         <!-- 本地开发服务器 IP -->
         <domain includeSubdomains="false">192.168.10.5</domain>
         <domain includeSubdomains="false">10.0.2.2</domain>

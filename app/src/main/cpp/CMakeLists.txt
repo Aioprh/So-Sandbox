@@ -16,7 +16,7 @@ set(CAPSTONE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(CAPSTONE_BUILD_CSTOOL OFF CACHE BOOL "" FORCE)
 set(CAPSTONE_ARCHITECTURE_DEFAULT OFF CACHE BOOL "" FORCE)
 set(CAPSTONE_ARM64_SUPPORT ON CACHE BOOL "" FORCE)
-set(CAPSTONE_ARM_SUPPORT OFF CACHE BOOL "" FORCE)
+set(CAPSTONE_ARM_SUPPORT ON CACHE BOOL "" FORCE)
 set(CAPSTONE_X86_SUPPORT OFF CACHE BOOL "" FORCE)
 set(CAPSTONE_MIPS_SUPPORT OFF CACHE BOOL "" FORCE)
 set(CAPSTONE_PPC_SUPPORT OFF CACHE BOOL "" FORCE)
@@ -52,6 +52,7 @@ add_library(
         runtime_tracer.cpp
         native-lib.cpp
         tiny_aes.cpp
+        demangle.cpp
         debugger.cpp)
 
 target_include_directories(so_sandbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/capstone/include)

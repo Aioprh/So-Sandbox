@@ -20,6 +20,7 @@ import androidx.fragment.app.Fragment;
 import android.util.Log;
 import com.example.anative.R;
 import com.example.anative.core.DataHolder;
+import com.example.anative.core.DisasmBridge;
 import com.example.anative.core.ElfParser;
 import com.example.anative.core.NativeFunction;
 import com.example.anative.core.NativeInvoker;
@@ -220,7 +221,7 @@ public class FlowChartFragment extends Fragment {
                 raf.seek(fileOffset);
                 raf.readFully(bytes);
                 raf.close();
-                return NativeInvoker.disassembleBytes(bytes, funcAddr, size, strTable, pltTable, funcTable);
+                return DisasmBridge.disassembleStatic(soPath, bytes, funcAddr, size, false, strTable, pltTable, funcTable);
             } catch (Exception e) {
                 return "";
             }

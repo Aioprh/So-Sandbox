@@ -23,4 +23,9 @@
         android:title="导出当前页面"
         app:showAsAction="never" />
 
+    <item
+        android:id="@+id/action_call_graph"
+        android:title="查看调用关系"
+        app:showAsAction="never" />
+
 </menu>
