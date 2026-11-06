@@ -37,6 +37,8 @@ public class GlobalSearchActivity extends AppCompatActivity {
     private static final int MAX_RESULTS = 300;
 
     private final List<Item> results = new ArrayList<>();
+    private String lastQuery = "";
+    private boolean loadingStrings;
     private Adapter adapter;
     private TextView tvHint;
     private RecyclerView recyclerView;
@@ -77,6 +79,7 @@ public class GlobalSearchActivity extends AppCompatActivity {
 
     private void search(String raw) {
         String query = raw == null ? "" : raw.trim().toLowerCase(Locale.US);
+        lastQuery = query;
         results.clear();
 
         if (query.isEmpty()) {
@@ -88,6 +91,7 @@ public class GlobalSearchActivity extends AppCompatActivity {
         }
 
         DataHolder holder = DataHolder.getInstance();
+        maybeLoadStrings(holder);
         List<NativeFunction> functions = holder.getFunctions();
         if (functions != null) {
             for (NativeFunction function : functions) {
@@ -129,6 +133,33 @@ public class GlobalSearchActivity extends AppCompatActivity {
         if (empty) {
             tvHint.setText("没有匹配结果\n请先加载 SO，或换一个关键字");
         }
+    }
+
+    /**
+     * 字符串表默认按需加载；搜索时如果还没加载，后台补一次再重搜。
+     */
+    private void maybeLoadStrings(DataHolder holder) {
+        if (loadingStrings || holder.getStrings() != null) {
+            return;
+        }
+        final String soPath = holder.getSoPath();
+        if (soPath == null || soPath.isEmpty()) {
+            return;
+        }
+        loadingStrings = true;
+        tvHint.setText("正在加载字符串表…");
+        new Thread(() -> {
+            try {
+                List<ElfParser.StringEntry> strings = ElfParser.parseStrings(soPath);
+                holder.setStrings(strings);
+            } catch (Exception ignored) {
+                // 解析失败时保持空表，不阻塞函数搜索
+            }
+            runOnUiThread(() -> {
+                loadingStrings = false;
+                search(lastQuery);
+            });
+        }, "search-load-strings").start();
     }
 
     private static class Item {
